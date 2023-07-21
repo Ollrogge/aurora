@@ -23,6 +23,7 @@ fn addr2line_args(config: &Config, address: usize) -> Vec<String> {
 fn addr2line(config: &Config, address: usize) -> String {
     let args = addr2line_args(config, address);
 
+    // TODO: arm-none-eabi-addr2line -e ./tests_usbus_hid.elf -a 0x576
     let output = Command::new("addr2line")
         .args(args)
         .output()

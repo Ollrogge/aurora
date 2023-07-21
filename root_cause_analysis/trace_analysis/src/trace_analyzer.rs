@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, TraceFormat};
 use crate::control_flow_graph::{CFGCollector, ControlFlowGraph};
 use crate::predicate_analysis::PredicateAnalyzer;
 use crate::predicates::{Predicate, SerializedPredicate};
@@ -84,9 +84,10 @@ fn parse_traces(
     must_include: Option<HashSet<usize>>,
     blacklist_paths: Option<Vec<String>>,
 ) -> TraceVec {
-    let pattern = match config.zipped {
-        false => format!("{}/*trace", path),
-        true => format!("{}/*.zip", path),
+    let pattern = match config.trace_format {
+        TraceFormat::JSON => format!("{}/*trace", path),
+        TraceFormat::ZIP => format!("{}/*.zip", path),
+        TraceFormat::BIN => format!("{}/*summary.bin", path),
     };
 
     let mut paths: Vec<String> = glob(&pattern)
@@ -99,8 +100,8 @@ fn parse_traces(
         paths.shuffle(&mut thread_rng());
     }
 
-    match config.zipped {
-        false => TraceVec::from_vec(
+    match config.trace_format {
+        TraceFormat::JSON => TraceVec::from_vec(
             paths
                 .into_par_iter()
                 .map(|s| Trace::from_trace_file(s))
@@ -112,10 +113,22 @@ fn parse_traces(
                 .filter(|t| store_trace(&t, &must_include))
                 .collect(),
         ),
-        true => TraceVec::from_vec(
+        TraceFormat::ZIP => TraceVec::from_vec(
             paths
                 .into_par_iter()
                 .map(|s| Trace::from_zip_file(s))
+                .take(if config.random_traces() {
+                    config.random_traces
+                } else {
+                    0xffff_ffff_ffff_ffff
+                })
+                .filter(|t| store_trace(&t, &must_include))
+                .collect(),
+        ),
+        TraceFormat::BIN => TraceVec::from_vec(
+            paths
+                .into_par_iter()
+                .map(|s| Trace::from_bin_file(s))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -248,6 +261,7 @@ impl TraceAnalyzer {
             .chain(self.non_crashes.iter_instructions_at_address(address))
     }
 
+    // intersection based on trace address
     pub fn crash_non_crash_intersection(&self) -> HashSet<usize> {
         let crash_union = TraceAnalyzer::trace_union(&self.crashes);
         let non_crash_union = TraceAnalyzer::trace_union(&self.non_crashes);
@@ -257,6 +271,7 @@ impl TraceAnalyzer {
             .collect()
     }
 
+    // for each register get all instructions at address
     pub fn values_at_address(
         &self,
         address: usize,

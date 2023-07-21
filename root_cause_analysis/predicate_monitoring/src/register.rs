@@ -1,6 +1,9 @@
+use std::any::Any;
 use std::fmt;
 use std::str::FromStr;
 
+use capstone::arch::arm::ArmReg;
+use capstone::RegId;
 use nix::libc::user_regs_struct;
 use zydis::Register as ZydisRegister;
 
@@ -8,8 +11,23 @@ pub trait ArchRegister {
     fn arch_register(self) -> Register;
 }
 
+// yolo
+pub trait RegisterStruct {
+    fn as_any(&self) -> &dyn Any;
+}
+impl RegisterStruct for user_regs_struct {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+impl RegisterStruct for user_regs_struct_arm {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 pub trait RegisterValue<T> {
-    fn value(self, registers: &user_regs_struct) -> T;
+    fn value(self, registers: &dyn RegisterStruct) -> T;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,11 +53,15 @@ pub enum Register64 {
 
 impl ArchRegister for Register64 {
     fn arch_register(self) -> Register {
-        Register::Register64(self)
+        Register::RegisterX86(RegisterX86::Register64(self))
     }
 }
 impl RegisterValue<u64> for Register64 {
-    fn value(self, registers: &user_regs_struct) -> u64 {
+    fn value(self, registers: &dyn RegisterStruct) -> u64 {
+        let registers = registers
+            .as_any()
+            .downcast_ref::<user_regs_struct>()
+            .unwrap();
         match self {
             Self::Rax => registers.rax,
             Self::Rbx => registers.rbx,
@@ -64,7 +86,7 @@ impl RegisterValue<u64> for Register64 {
 
 impl From<Register64> for Register {
     fn from(register: Register64) -> Self {
-        Register::Register64(register)
+        Register::RegisterX86(RegisterX86::Register64(register))
     }
 }
 
@@ -146,7 +168,7 @@ pub enum Register32 {
 
 impl ArchRegister for Register32 {
     fn arch_register(self) -> Register {
-        Register::Register64(match self {
+        Register::RegisterX86(RegisterX86::Register64(match self {
             Self::Eax => Register64::Rax,
             Self::Ebx => Register64::Rbx,
             Self::Ecx => Register64::Rcx,
@@ -164,18 +186,28 @@ impl ArchRegister for Register32 {
             Self::R13d => Register64::R13,
             Self::R14d => Register64::R14,
             Self::R15d => Register64::R15,
-        })
+        }))
     }
 }
 impl RegisterValue<u32> for Register32 {
-    fn value(self, registers: &user_regs_struct) -> u32 {
+    fn value(self, registers: &dyn RegisterStruct) -> u32 {
+        let registers = registers
+            .as_any()
+            .downcast_ref::<user_regs_struct>()
+            .unwrap();
         (self.arch_register().value(registers) & 0xFFFF_FFFF) as u32
     }
 }
 
-impl From<Register32> for Register {
+impl From<Register32> for RegisterX86 {
     fn from(register: Register32) -> Self {
-        Register::Register32(register)
+        RegisterX86::Register32(register)
+    }
+}
+
+impl From<Register64> for RegisterX86 {
+    fn from(register: Register64) -> Self {
+        RegisterX86::Register64(register)
     }
 }
 
@@ -263,35 +295,39 @@ pub enum Register16 {
 
 impl ArchRegister for Register16 {
     fn arch_register(self) -> Register {
-        match self {
-            Self::Ax => Register::Register64(Register64::Rax),
-            Self::Bx => Register::Register64(Register64::Rbx),
-            Self::Cx => Register::Register64(Register64::Rcx),
-            Self::Dx => Register::Register64(Register64::Rdx),
-            Self::Bp => Register::Register64(Register64::Rbp),
-            Self::Si => Register::Register64(Register64::Rsi),
-            Self::Di => Register::Register64(Register64::Rdi),
-            Self::Sp => Register::Register64(Register64::Rsp),
-            Self::Ip => Register::Register64(Register64::Rip),
-            Self::Cs => Register::Register16(Register16::Cs),
-            Self::Ss => Register::Register16(Register16::Ss),
-            Self::Ds => Register::Register16(Register16::Ds),
-            Self::Es => Register::Register16(Register16::Es),
-            Self::Fs => Register::Register16(Register16::Fs),
-            Self::Gs => Register::Register16(Register16::Gs),
-            Self::R8w => Register::Register64(Register64::R8),
-            Self::R9w => Register::Register64(Register64::R9),
-            Self::R10w => Register::Register64(Register64::R10),
-            Self::R11w => Register::Register64(Register64::R11),
-            Self::R12w => Register::Register64(Register64::R12),
-            Self::R13w => Register::Register64(Register64::R13),
-            Self::R14w => Register::Register64(Register64::R14),
-            Self::R15w => Register::Register64(Register64::R15),
-        }
+        Register::RegisterX86(match self {
+            Self::Ax => RegisterX86::Register64(Register64::Rax),
+            Self::Bx => RegisterX86::Register64(Register64::Rbx),
+            Self::Cx => RegisterX86::Register64(Register64::Rcx),
+            Self::Dx => RegisterX86::Register64(Register64::Rdx),
+            Self::Bp => RegisterX86::Register64(Register64::Rbp),
+            Self::Si => RegisterX86::Register64(Register64::Rsi),
+            Self::Di => RegisterX86::Register64(Register64::Rdi),
+            Self::Sp => RegisterX86::Register64(Register64::Rsp),
+            Self::Ip => RegisterX86::Register64(Register64::Rip),
+            Self::Cs => RegisterX86::Register16(Register16::Cs),
+            Self::Ss => RegisterX86::Register16(Register16::Ss),
+            Self::Ds => RegisterX86::Register16(Register16::Ds),
+            Self::Es => RegisterX86::Register16(Register16::Es),
+            Self::Fs => RegisterX86::Register16(Register16::Fs),
+            Self::Gs => RegisterX86::Register16(Register16::Gs),
+            Self::R8w => RegisterX86::Register64(Register64::R8),
+            Self::R9w => RegisterX86::Register64(Register64::R9),
+            Self::R10w => RegisterX86::Register64(Register64::R10),
+            Self::R11w => RegisterX86::Register64(Register64::R11),
+            Self::R12w => RegisterX86::Register64(Register64::R12),
+            Self::R13w => RegisterX86::Register64(Register64::R13),
+            Self::R14w => RegisterX86::Register64(Register64::R14),
+            Self::R15w => RegisterX86::Register64(Register64::R15),
+        })
     }
 }
 impl RegisterValue<u16> for Register16 {
-    fn value(self, registers: &user_regs_struct) -> u16 {
+    fn value(self, registers: &dyn RegisterStruct) -> u16 {
+        let registers = registers
+            .as_any()
+            .downcast_ref::<user_regs_struct>()
+            .unwrap();
         match self {
             Self::Cs => registers.cs as u16,
             Self::Ss => registers.ss as u16,
@@ -304,9 +340,9 @@ impl RegisterValue<u16> for Register16 {
     }
 }
 
-impl From<Register16> for Register {
+impl From<Register16> for RegisterX86 {
     fn from(register: Register16) -> Self {
-        Register::Register16(register)
+        RegisterX86::Register16(register)
     }
 }
 
@@ -399,35 +435,39 @@ pub enum Register8Low {
 
 impl ArchRegister for Register8Low {
     fn arch_register(self) -> Register {
-        Register::Register64(match self {
-            Self::Al => Register64::Rax,
-            Self::Bl => Register64::Rbx,
-            Self::Cl => Register64::Rcx,
-            Self::Dl => Register64::Rdx,
-            Self::Bpl => Register64::Rbp,
-            Self::Sil => Register64::Rsi,
-            Self::Dil => Register64::Rdi,
-            Self::Spl => Register64::Rsp,
-            Self::R8b => Register64::R8,
-            Self::R9b => Register64::R9,
-            Self::R10b => Register64::R10,
-            Self::R11b => Register64::R11,
-            Self::R12b => Register64::R12,
-            Self::R13b => Register64::R13,
-            Self::R14b => Register64::R14,
-            Self::R15b => Register64::R15,
+        Register::RegisterX86(match self {
+            Self::Al => RegisterX86::Register64(Register64::Rax),
+            Self::Bl => RegisterX86::Register64(Register64::Rbx),
+            Self::Cl => RegisterX86::Register64(Register64::Rcx),
+            Self::Dl => RegisterX86::Register64(Register64::Rdx),
+            Self::Bpl => RegisterX86::Register64(Register64::Rbp),
+            Self::Sil => RegisterX86::Register64(Register64::Rsi),
+            Self::Dil => RegisterX86::Register64(Register64::Rdi),
+            Self::Spl => RegisterX86::Register64(Register64::Rsp),
+            Self::R8b => RegisterX86::Register64(Register64::R8),
+            Self::R9b => RegisterX86::Register64(Register64::R9),
+            Self::R10b => RegisterX86::Register64(Register64::R10),
+            Self::R11b => RegisterX86::Register64(Register64::R11),
+            Self::R12b => RegisterX86::Register64(Register64::R12),
+            Self::R13b => RegisterX86::Register64(Register64::R13),
+            Self::R14b => RegisterX86::Register64(Register64::R14),
+            Self::R15b => RegisterX86::Register64(Register64::R15),
         })
     }
 }
 impl RegisterValue<u8> for Register8Low {
-    fn value(self, registers: &user_regs_struct) -> u8 {
+    fn value(self, registers: &dyn RegisterStruct) -> u8 {
+        let registers = registers
+            .as_any()
+            .downcast_ref::<user_regs_struct>()
+            .unwrap();
         (self.arch_register().value(registers) & 0xFF) as u8
     }
 }
 
-impl From<Register8Low> for Register {
+impl From<Register8Low> for RegisterX86 {
     fn from(register: Register8Low) -> Self {
-        Register::Register8Low(register)
+        RegisterX86::Register8Low(register)
     }
 }
 
@@ -494,23 +534,33 @@ pub enum Register8High {
 
 impl ArchRegister for Register8High {
     fn arch_register(self) -> Register {
-        Register::Register64(match self {
+        Register::RegisterX86(RegisterX86::Register64(match self {
             Self::Ah => Register64::Rax,
             Self::Bh => Register64::Rbx,
             Self::Ch => Register64::Rcx,
             Self::Dh => Register64::Rdx,
-        })
+        }))
     }
 }
 impl RegisterValue<u8> for Register8High {
-    fn value(self, registers: &user_regs_struct) -> u8 {
+    fn value(self, registers: &dyn RegisterStruct) -> u8 {
+        let registers = registers
+            .as_any()
+            .downcast_ref::<user_regs_struct>()
+            .unwrap();
         ((self.arch_register().value(registers) >> 8) & 0xFF) as u8
     }
 }
 
-impl From<Register8High> for Register {
+impl From<Register8High> for RegisterX86 {
     fn from(register: Register8High) -> Self {
-        Register::Register8High(register)
+        RegisterX86::Register8High(register)
+    }
+}
+
+impl From<RegisterX86> for Register {
+    fn from(register: RegisterX86) -> Self {
+        Register::RegisterX86(register)
     }
 }
 
@@ -542,16 +592,195 @@ impl FromStr for Register8High {
     }
 }
 
+pub struct user_regs_struct_arm {
+    pub r0: u32,
+    pub r1: u32,
+    pub r2: u32,
+    pub r3: u32,
+    pub r4: u32,
+    pub r5: u32,
+    pub r6: u32,
+    pub r7: u32,
+    pub r8: u32,
+    pub r9: u32,
+    pub r10: u32,
+    pub r11: u32,
+    pub r12: u32,
+    pub sp: u32,   // Stack pointer
+    pub lr: u32,   // Link register
+    pub pc: u32,   // Program counter
+    pub xpsr: u32, // Special-purpose program status registers (Cortex-M)
+    pub cpsr: u32, // current program status register
+    pub spsr: u32, // saved program status register
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Register {
+pub enum RegisterArm {
+    // General-purpose registers
+    R0,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    SP,
+    LR,
+
+    PC,
+
+    // Special-purpose program status registers (Cortex-M)
+    xPSR,
+
+    // Current Program Status register
+    CPSR,
+
+    // Saved Program Status Registers
+    SPSR,
+}
+
+impl RegisterArm {
+    pub fn from_regid(id: RegId) -> Option<Self> {
+        match id.0 as u32 {
+            ARM_REG_R0 => Some(RegisterArm::R0),
+            ARM_REG_R1 => Some(RegisterArm::R1),
+            ARM_REG_R2 => Some(RegisterArm::R2),
+            ARM_REG_R3 => Some(RegisterArm::R3),
+            ARM_REG_R4 => Some(RegisterArm::R4),
+            ARM_REG_R5 => Some(RegisterArm::R5),
+            ARM_REG_R6 => Some(RegisterArm::R6),
+            ARM_REG_R7 => Some(RegisterArm::R7),
+            ARM_REG_R8 => Some(RegisterArm::R8),
+            ARM_REG_R9 => Some(RegisterArm::R9),
+            ARM_REG_R10 => Some(RegisterArm::R10),
+            ARM_REG_R11 => Some(RegisterArm::R11),
+            ARM_REG_R12 => Some(RegisterArm::R12),
+            ARM_REG_SP => Some(RegisterArm::SP),
+            ARM_REG_LR => Some(RegisterArm::LR),
+            ARM_REG_SPSR => Some(RegisterArm::SPSR),
+            _ => {
+                println!("Registerarm: unhandled regid: {:?}", id);
+                None
+            }
+        }
+    }
+}
+
+impl From<RegisterArm> for Register {
+    fn from(register: RegisterArm) -> Self {
+        Register::RegisterArm(register)
+    }
+}
+
+impl fmt::Display for RegisterArm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::R0 => "r0",
+                Self::R1 => "r1",
+                Self::R2 => "r2",
+                Self::R3 => "r3",
+                Self::R4 => "r4",
+                Self::R5 => "r5",
+                Self::R6 => "r6",
+                Self::R7 => "r7",
+                Self::R8 => "r8",
+                Self::R9 => "r9",
+                Self::R10 => "r10",
+                Self::R11 => "r11",
+                Self::R12 => "r12",
+                Self::SP => "sp",
+                Self::LR => "lr",
+                Self::PC => "pc",
+                Self::xPSR => "xPSR",
+                Self::CPSR => "CPSR",
+                Self::SPSR => "SPSR",
+            }
+        )
+    }
+}
+
+impl FromStr for RegisterArm {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "r0" => Self::R0,
+            "r1" => Self::R1,
+            "r2" => Self::R2,
+            "r3" => Self::R3,
+            "r4" => Self::R4,
+            "r5" => Self::R5,
+            "r6" => Self::R6,
+            "r7" => Self::R7,
+            "r8" => Self::R8,
+            "r9" => Self::R9,
+            "r10" => Self::R10,
+            "r11" => Self::R11,
+            "r12" => Self::R12,
+            "sp" => Self::SP,
+            "lr" => Self::LR,
+            "pc" => Self::PC,
+            "xPSR" => Self::xPSR,
+            "CPSR" => Self::CPSR,
+            "SPSR" => Self::SPSR,
+            _ => return Err(()),
+        })
+    }
+}
+
+impl RegisterValue<u32> for RegisterArm {
+    fn value(self, registers: &dyn RegisterStruct) -> u32 {
+        let registers = registers
+            .as_any()
+            .downcast_ref::<user_regs_struct_arm>()
+            .unwrap();
+        match self {
+            Self::R0 => registers.r0,
+            Self::R1 => registers.r1,
+            Self::R2 => registers.r2,
+            Self::R3 => registers.r3,
+            Self::R4 => registers.r4,
+            Self::R5 => registers.r5,
+            Self::R6 => registers.r6,
+            Self::R7 => registers.r7,
+            Self::R8 => registers.r8,
+            Self::R9 => registers.r9,
+            Self::R10 => registers.r10,
+            Self::R11 => registers.r11,
+            Self::R12 => registers.r12,
+            Self::SP => registers.sp,
+            Self::LR => registers.lr,
+            Self::PC => registers.pc,
+            Self::xPSR => registers.xpsr,
+            Self::CPSR => registers.cpsr,
+            Self::SPSR => registers.spsr,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterX86 {
     Register64(Register64),
     Register32(Register32),
     Register16(Register16),
     Register8Low(Register8Low),
     Register8High(Register8High),
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Register {
+    RegisterX86(RegisterX86),
+    RegisterArm(RegisterArm),
+}
 
-impl Register {
+impl RegisterX86 {
     pub fn from_zydis_register(reg: ZydisRegister) -> Option<Self> {
         match reg {
             ZydisRegister::AL => Some(Register8Low::Al.into()),
@@ -641,13 +870,16 @@ impl Register {
 }
 
 impl RegisterValue<usize> for Register {
-    fn value(self, registers: &user_regs_struct) -> usize {
+    fn value(self, registers: &dyn RegisterStruct) -> usize {
         match self {
-            Self::Register64(register) => register.value(registers) as usize,
-            Self::Register32(register) => register.value(registers) as usize,
-            Self::Register16(register) => register.value(registers) as usize,
-            Self::Register8Low(register) => register.value(registers) as usize,
-            Self::Register8High(register) => register.value(registers) as usize,
+            Self::RegisterX86(reg) => match reg {
+                RegisterX86::Register64(register) => register.value(registers) as usize,
+                RegisterX86::Register32(register) => register.value(registers) as usize,
+                RegisterX86::Register16(register) => register.value(registers) as usize,
+                RegisterX86::Register8High(register) => register.value(registers) as usize,
+                RegisterX86::Register8Low(register) => register.value(registers) as usize,
+            },
+            Self::RegisterArm(reg) => reg.value(registers) as usize,
         }
     }
 }
@@ -655,11 +887,14 @@ impl RegisterValue<usize> for Register {
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Register64(register) => register.fmt(f),
-            Self::Register32(register) => register.fmt(f),
-            Self::Register16(register) => register.fmt(f),
-            Self::Register8Low(register) => register.fmt(f),
-            Self::Register8High(register) => register.fmt(f),
+            Self::RegisterX86(reg) => match reg {
+                RegisterX86::Register64(register) => register.fmt(f),
+                RegisterX86::Register32(register) => register.fmt(f),
+                RegisterX86::Register16(register) => register.fmt(f),
+                RegisterX86::Register8Low(register) => register.fmt(f),
+                RegisterX86::Register8High(register) => register.fmt(f),
+            },
+            Self::RegisterArm(reg) => reg.fmt(f),
         }
     }
 }
@@ -669,10 +904,23 @@ impl FromStr for Register {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Register64::from_str(s)
-            .and_then(|reg| Ok(reg.into()))
-            .or_else(|_| Register32::from_str(s).and_then(|reg| Ok(reg.into())))
-            .or_else(|_| Register16::from_str(s).and_then(|reg| Ok(reg.into())))
-            .or_else(|_| Register8Low::from_str(s).and_then(|reg| Ok(reg.into())))
-            .or_else(|_| Register8High::from_str(s).and_then(|reg| Ok(reg.into())))
+            .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register64(reg))))
+            .or_else(|_| {
+                Register32::from_str(s)
+                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register32(reg))))
+            })
+            .or_else(|_| {
+                Register16::from_str(s)
+                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register16(reg))))
+            })
+            .or_else(|_| {
+                Register8Low::from_str(s)
+                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register8Low(reg))))
+            })
+            .or_else(|_| {
+                Register8High::from_str(s)
+                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register8High(reg))))
+            })
+            .or_else(|_| RegisterArm::from_str(s).and_then(|reg| Ok(Self::RegisterArm(reg))))
     }
 }

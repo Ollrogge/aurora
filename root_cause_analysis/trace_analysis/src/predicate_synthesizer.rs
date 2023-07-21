@@ -42,6 +42,9 @@ impl PredicateSynthesizer {
         predicates
     }
 
+    // for each address, filter by registers which have been written to,
+    // and get min / max value depending on selector, then synthesize constants
+    // for this instruction and reg. e.g. r < c to find outliers later
     fn register_constant_predicates_at_address(
         address: usize,
         trace_analyzer: &TraceAnalyzer,

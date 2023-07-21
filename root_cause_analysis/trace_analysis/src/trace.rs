@@ -1,9 +1,18 @@
+use anyhow::{Context, Result};
+use bincode;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Keys;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 
+#[cfg(feature = "arm")]
+pub static REGISTERS: [&str; 19] = [
+    "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "sp", "lr",
+    "pc", "xPSR", "CPSR", "SPSR",
+];
+
+#[cfg(not(feature = "arm"))]
 pub static REGISTERS: [&str; 25] = [
     "rax",
     "rbx",
@@ -50,6 +59,10 @@ impl Register {
         Register { value }
     }
 
+    pub fn from(value: u64) -> Register {
+        Register { value }
+    }
+
     pub fn value(&self) -> u64 {
         self.value
     }
@@ -69,6 +82,10 @@ pub struct Registers(HashMap<usize, Register>);
 impl Registers {
     pub fn get(&self, index: usize) -> Option<&Register> {
         self.0.get(&index)
+    }
+
+    pub fn from(map: HashMap<usize, Register>) -> Self {
+        Registers(map)
     }
 
     pub fn insert(&mut self, index: usize, reg: Register) {
@@ -204,14 +221,20 @@ impl SerializedInstruction {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct SerializedEdge {
+pub struct SerializedEdge {
     from: usize,
     to: usize,
     count: usize,
 }
 
+impl SerializedEdge {
+    pub fn new(from: usize, to: usize, count: usize) -> SerializedEdge {
+        SerializedEdge { from, to, count }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
-struct SerializedTrace {
+pub struct SerializedTrace {
     pub instructions: Vec<SerializedInstruction>,
     pub edges: Vec<SerializedEdge>,
     pub first_address: usize,
@@ -292,6 +315,12 @@ impl Trace {
     fn from_file(file_path: String, content: String) -> Trace {
         let serialized_trace: SerializedTrace = serde_json::from_str(&content)
             .expect(&format!("Could not deserialize file {}", &file_path));
+        SerializedTrace::to_trace(file_path, serialized_trace)
+    }
+
+    pub fn from_bin_file(file_path: String) -> Trace {
+        let data = fs::read(&file_path).expect(&format!("Unable to read bin file: {}", file_path));
+        let serialized_trace: SerializedTrace = bincode::deserialize(&data).unwrap();
         SerializedTrace::to_trace(file_path, serialized_trace)
     }
 

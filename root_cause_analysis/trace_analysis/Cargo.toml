@@ -15,3 +15,9 @@ serde_json="*"
 structopt="*"
 zip = "*"
 rand="*"
+bincode="*"
+anyhow="*"
+
+[features]
+default = ["arm"]
+arm = []

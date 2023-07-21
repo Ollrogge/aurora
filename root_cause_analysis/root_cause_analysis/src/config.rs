@@ -1,4 +1,6 @@
+use std::error::Error;
 use std::num::ParseIntError;
+use std::str::FromStr;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
@@ -12,7 +14,35 @@ name = "root_cause_analysis",
 global_settings = &[AppSettings::DisableVersion]
 )]
 
+pub enum TraceFormat {
+    JSON,
+    ZIP,
+    BIN,
+}
+
+impl FromStr for TraceFormat {
+    // dyn cuz it is a trait
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "JSON" => Ok(TraceFormat::JSON),
+            "ZIP" => Ok(TraceFormat::ZIP),
+            "BIN" => Ok(TraceFormat::BIN),
+            _ => Err(format!("Invalid trace format: {}", s).into()),
+        }
+    }
+}
+
+#[derive(StructOpt)]
 pub struct Config {
+    #[structopt(
+        long = "trace_format",
+        default_value = "zip",
+        case_insensitive = true,
+        help = "Trace format of file"
+    )]
+    pub trace_format: TraceFormat,
     #[structopt(long = "trace-dir", default_value = "", help = "Path to traces")]
     pub trace_dir: String,
     #[structopt(long = "eval-dir", help = "Path to evaluation folder")]
@@ -21,6 +51,11 @@ pub struct Config {
     pub rank_predicates: bool,
     #[structopt(long = "monitor", help = "Monitor predicates")]
     pub monitor_predicates: bool,
+    #[structopt(
+        long = "monitor-from-file",
+        help = "Load monitoring data from a file instead of using ptrace"
+    )]
+    pub monitor_from_file: bool,
     #[structopt(
         long = "--monitor-timeout",
         default_value = "60",

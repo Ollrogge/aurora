@@ -1,8 +1,8 @@
-/*BEGIN_LEGAL 
-Intel Open Source License 
+/*BEGIN_LEGAL
+Intel Open Source License
 
 Copyright (c) 2002-2018 Intel Corporation. All rights reserved.
- 
+
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
@@ -15,7 +15,7 @@ other materials provided with the distribution.  Neither the name of
 the Intel Corporation nor the names of its contributors may be used to
 endorse or promote products derived from this software without
 specific prior written permission.
- 
+
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -242,6 +242,7 @@ VOID ins_save_memory_access(ADDRINT ins_addr, ADDRINT mem_addr, UINT32 size) {
         assert(mem_data->last_addr.size == size && "Memory operand has different memory access sizes");
     }
     MemoryField access = {mem_addr, size, 0};
+    // read from memory for a write hook since the function is called **after** write has happened
     access.value = read_from_addr(mem_addr, size, ins_addr);
     if (mem_data->max_addr.address <= access.address) mem_data->max_addr = access;
     if (mem_data->min_addr.address >= access.address) mem_data->min_addr = access;

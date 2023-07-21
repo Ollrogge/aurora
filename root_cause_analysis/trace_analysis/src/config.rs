@@ -1,4 +1,6 @@
+use std::error::Error;
 use std::num::ParseIntError;
+use std::str::FromStr;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
@@ -12,6 +14,27 @@ fn parse_hex(src: &str) -> Result<usize, ParseIntError> {
     global_settings = &[AppSettings::DisableVersion]
 )]
 
+pub enum TraceFormat {
+    JSON,
+    ZIP,
+    BIN,
+}
+
+impl FromStr for TraceFormat {
+    // dyn cuz it is a trait
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "JSON" => Ok(TraceFormat::JSON),
+            "ZIP" => Ok(TraceFormat::ZIP),
+            "BIN" => Ok(TraceFormat::BIN),
+            _ => Err(format!("Invalid trace format: {}", s).into()),
+        }
+    }
+}
+
+#[derive(StructOpt)]
 pub struct Config {
     #[structopt(index = 1, help = "Path to traces of crashing inputs")]
     pub path_to_crashes: String,
@@ -27,8 +50,13 @@ pub struct Config {
     pub dump_traces: bool,
     #[structopt(short = "s", long = "scores", help = "Dumps instruction scores")]
     pub dump_scores: bool,
-    #[structopt(long = "zip", help = "Trace files are provided in zipped form")]
-    pub zipped: bool,
+    #[structopt(
+        long = "trace_format",
+        default_value = "zip",
+        case_insensitive = true,
+        help = "Trace format of file"
+    )]
+    pub trace_format: TraceFormat,
     #[structopt(short = "a", long = "dump-address", default_value="0", parse(try_from_str = parse_hex), help = "Dump at address")]
     pub dump_address: usize,
     #[structopt(
@@ -78,7 +106,7 @@ impl Config {
             check_traces: false,
             dump_traces: false,
             dump_scores: true,
-            zipped: true,
+            trace_format: TraceFormat::BIN,
             dump_address: 0,
             random_traces: 0,
             filter_non_crashes: false,

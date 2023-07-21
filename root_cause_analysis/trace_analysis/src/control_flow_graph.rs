@@ -189,6 +189,7 @@ impl CFGCollector {
         let mut bb = BasicBlock::new();
         let mut finished = false;
 
+        // find root edge ?
         let mut heads = self.heads();
         assert_eq!(heads.len(), 1);
 

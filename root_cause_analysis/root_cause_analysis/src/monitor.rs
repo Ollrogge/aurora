@@ -1,27 +1,82 @@
 use crate::config::Config;
 use crate::rankings::serialize_rankings;
 use crate::utils::{glob_paths, read_file};
+use anyhow::{Context, Result};
+use predicate_monitoring::rank_predicates;
 use rayon::prelude::*;
 use std::fs::File;
-use std::fs::{read_to_string, remove_file};
+use std::fs::{self, read, read_to_string, remove_file};
 use std::process::{Child, Command, Stdio};
 use std::time::Instant;
+use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::trace_analyzer::{blacklist_path, read_crash_blacklist};
 
-pub fn monitor_predicates(config: &Config) {
-    let cmd_line = cmd_line(&config);
+pub fn monitor_predicates(config: &Config) -> Result<()> {
     let blacklist_paths =
         read_crash_blacklist(config.blacklist_crashes(), &config.crash_blacklist_path);
 
-    let rankings = glob_paths(format!("{}/inputs/crashes/*", config.eval_dir))
-        .into_par_iter()
-        .enumerate()
-        .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
-        .map(|(index, i)| monitor(config, index, &replace_input(&cmd_line, &i)))
-        .filter(|r| !r.is_empty())
-        .collect();
+    let rankings;
+    #[cfg(not(feature = "arm"))]
+    {
+        let cmd_line = cmd_line(&config);
+
+        rankings = glob_paths(format!("{}/inputs/crashes/*", config.eval_dir))
+            .into_par_iter()
+            .enumerate()
+            .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
+            .map(|(index, i)| monitor(config, index, &replace_input(&cmd_line, &i)))
+            .filter(|r| !r.is_empty())
+            .collect();
+    }
+    #[cfg(feature = "arm")]
+    {
+        // todo: different way than depending on the fact that the binary is in the parent dir
+        let pattern = format!("{}/../*_trace.bin", config.eval_dir);
+        let binary_path = glob_paths(pattern)
+            .pop()
+            .expect("No binary found for monitoring");
+
+        let binary = fs::read(binary_path)?;
+        let predicate_file = &format!("{}/{}", config.eval_dir, predicate_file_name());
+
+        let predicates = deserialize_predicates(predicate_file);
+
+        rankings = glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
+            .into_par_iter()
+            .enumerate()
+            .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
+            .filter_map(|(index, path)| monitor_arm(path, &binary, &predicates).ok())
+            .filter(|r| !r.is_empty())
+            .collect();
+    }
 
     serialize_rankings(config, &rankings);
+
+    Ok(())
+}
+
+fn deserialize_predicates(predicate_file: &String) -> Vec<SerializedPredicate> {
+    let content = read_to_string(predicate_file).expect("Could not read predicates.json");
+
+    serde_json::from_str(&content).expect("Could not deserialize predicates.")
+}
+
+fn serialize_ranking(out_file: &String, ranking: &Vec<usize>) {
+    let content = serde_json::to_string(&ranking).expect("Could not serialize ranking");
+    fs::write(out_file, content).expect(&format!("Could not write {}", out_file));
+}
+
+pub fn monitor_arm(
+    input_path: String,
+    binary: &Vec<u8>,
+    predicates: &Vec<SerializedPredicate>,
+) -> Result<Vec<usize>> {
+    let f = File::open(input_path).context("open monitor file")?;
+    // TODO: dont hardcode register amount
+    let detailed_trace: Vec<(usize, [u32; 18])> =
+        bincode::deserialize_from(f).context("bincode deserialize")?;
+
+    Ok(rank_predicates(predicates, detailed_trace, binary))
 }
 
 pub fn monitor(

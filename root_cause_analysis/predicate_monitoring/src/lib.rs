@@ -1,19 +1,19 @@
+mod predicate;
+mod register;
+mod rflags;
+
 use log::{debug, error, info, trace, warn};
 use nix::sys::wait::WaitStatus;
 use nix::unistd::Pid;
 use predicate::*;
 use ptracer::{ContinueMode, Ptracer};
-use register::*;
+use register::RegisterValue;
 use rflags::RFlags;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 use trace_analysis::predicates::SerializedPredicate;
 use zydis::*;
-
-mod predicate;
-mod register;
-mod rflags;
 
 fn new_decoder() -> Decoder {
     Decoder::new(MachineMode::LONG_64, AddressWidth::_64).expect("failed to create decoder")
@@ -115,6 +115,7 @@ impl RootCauseCandidate {
                         }
                     }
                 };
+                let value = 0x0;
                 debug!(
                     "value = {:#018x}, compare.value = {:#018x}",
                     value, compare.value

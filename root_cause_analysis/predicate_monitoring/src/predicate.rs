@@ -1,8 +1,15 @@
 use nix::libc::user_regs_struct;
 use std::str::FromStr;
 
-use crate::register::{Register, RegisterValue};
-use crate::rflags::RFlags;
+use super::register::{Register, RegisterArm, RegisterValue, RegisterX86};
+use super::rflags::RFlags;
+use anyhow::{Context, Result};
+use capstone::{
+    arch::arm::{ArmInsnDetail, ArmOpMem, ArmOperandType},
+    arch::DetailsArchInsn,
+    prelude::*,
+    RegId,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Predicate {
@@ -46,15 +53,26 @@ pub struct MemoryLocation {
 impl MemoryLocation {
     fn from_memory_info(mem: &zydis::ffi::MemoryInfo) -> Self {
         Self {
-            segment: Register::from_zydis_register(mem.segment),
-            base: Register::from_zydis_register(mem.base),
-            index: Register::from_zydis_register(mem.index),
+            segment: RegisterX86::from_zydis_register(mem.segment).map(|x| x.into()),
+            base: RegisterX86::from_zydis_register(mem.base).map(|x| x.into()),
+            index: RegisterX86::from_zydis_register(mem.index).map(|x| x.into()),
             scale: mem.scale,
             displacement: if mem.disp.has_displacement {
                 Some(mem.disp.displacement)
             } else {
                 None
             },
+        }
+    }
+
+    pub fn from_arm_op_mem(mem: ArmOpMem) -> MemoryLocation {
+        MemoryLocation {
+            segment: None,
+            base: RegisterArm::from_regid(mem.base()).map(|x| x.into()),
+            index: RegisterArm::from_regid(mem.index()).map(|x| x.into()),
+            // todo: i dont understand why this can be -1
+            scale: mem.scale() as u8,
+            displacement: Some(mem.disp() as i64),
         }
     }
 }
@@ -239,4 +257,56 @@ pub fn convert_predicate(
     }
 
     None
+}
+
+pub fn convert_predicate_arm(
+    predicate: &str,
+    instruction: capstone::InsnDetail,
+) -> Result<Option<Predicate>> {
+    let parts: Vec<_> = predicate.split(' ').collect();
+    let function = match parts.len() {
+        1 | 2 => parts[0],
+        3 => parts[1],
+        _ => unimplemented!(),
+    };
+
+    let arch_detail = instruction
+        .arch_detail()
+        .arm()
+        .context("instruction is not an arm inst")?;
+
+    if function.contains("edge") {
+        let source = usize::from_str_radix(&parts[0][2..], 16).expect("failed to parse source");
+        let destination =
+            usize::from_str_radix(&parts[2][2..], 16).expect("failed to parse destination");
+        let transition = match function {
+            "has_edge_to" => EdgeTransition::Taken,
+            "edge_only_taken_to" => EdgeTransition::NotTaken,
+            "last_edge_to" => return Ok(None),
+            _ => unimplemented!(),
+        };
+
+        return Ok(Some(Predicate::Edge(EdgePredicate {
+            source,
+            transition,
+            destination,
+        })));
+    } else if function.contains("reg_val") {
+        let value = usize::from_str_radix(&parts[2][2..], 16).expect("failed to parse value");
+        let memory_locations =
+            arch_detail
+                .operands()
+                .into_iter()
+                .filter_map(|op| match op.op_type {
+                    ArmOperandType::Mem(mem) => Some(mem),
+                    _ => None,
+                });
+
+        let memory = memory_locations
+            .last()
+            .and_then(|op| Some(MemoryLocation::from_arm_op_mem(op)))
+            .context("Unable to create memory location")?;
+    }
+
+    Ok(None)
 }
