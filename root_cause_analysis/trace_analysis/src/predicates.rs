@@ -1,3 +1,5 @@
+use crate::config::CpuArchitecture;
+use crate::register::{Register64 as RegisterX86, RegisterArm};
 use crate::trace::{Instruction, Register, Selector};
 use serde::{Deserialize, Serialize};
 
@@ -209,9 +211,13 @@ pub fn max_min_diff_reg_val_greater_or_equal(
 }
 
 fn is_flag_bit_set(instruction: &Instruction, reg_type: Selector, pos: u64) -> bool {
+    let flags_idx = match instruction.arch {
+        CpuArchitecture::X86_64 => RegisterX86::Eflags as usize - 1,
+        CpuArchitecture::ARM => RegisterArm::xPSR as usize,
+    };
     match reg_type {
-        Selector::RegMin => is_reg_bit_set(instruction.registers_min.get(22), pos),
-        Selector::RegMax => is_reg_bit_set(instruction.registers_max.get(22), pos),
+        Selector::RegMin => is_reg_bit_set(instruction.registers_min.get(flags_idx), pos),
+        Selector::RegMax => is_reg_bit_set(instruction.registers_max.get(flags_idx), pos),
         //        Selector::RegLast => is_reg_bit_set(instruction.registers_last.get(22), pos),
         _ => unreachable!(),
     }
@@ -228,27 +234,45 @@ fn is_reg_bit_set(reg: Option<&Register>, pos: u64) -> bool {
 }
 
 pub fn min_carry_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 0)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 0),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMin, 29),
+    }
 }
 
 pub fn min_parity_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 2)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 2),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn min_adjust_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 4)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 4),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn min_zero_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 6)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 6),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMin, 30),
+    }
 }
 
 pub fn min_sign_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 7)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 7),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMin, 31),
+    }
 }
 
 pub fn min_trap_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 8)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 8),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn min_interrupt_flag_set(
@@ -256,7 +280,11 @@ pub fn min_interrupt_flag_set(
     _: Option<usize>,
     _: Option<usize>,
 ) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 9)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 9),
+        //todo: BASEPRI / PRIMASK register
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn min_direction_flag_set(
@@ -264,7 +292,10 @@ pub fn min_direction_flag_set(
     _: Option<usize>,
     _: Option<usize>,
 ) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 10)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 10),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn min_overflow_flag_set(
@@ -272,31 +303,52 @@ pub fn min_overflow_flag_set(
     _: Option<usize>,
     _: Option<usize>,
 ) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMin, 11)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMin, 11),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMin, 28),
+    }
 }
 
 pub fn max_carry_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 0)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 0),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMax, 29),
+    }
 }
 
 pub fn max_parity_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 2)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 2),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn max_adjust_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 4)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 4),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn max_zero_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 6)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 6),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMax, 30),
+    }
 }
 
 pub fn max_sign_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 7)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 7),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMax, 31),
+    }
 }
 
 pub fn max_trap_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 8)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 8),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn max_interrupt_flag_set(
@@ -304,7 +356,11 @@ pub fn max_interrupt_flag_set(
     _: Option<usize>,
     _: Option<usize>,
 ) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 9)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 9),
+        //todo: BASEPRI / PRIMASK register
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn max_direction_flag_set(
@@ -312,7 +368,10 @@ pub fn max_direction_flag_set(
     _: Option<usize>,
     _: Option<usize>,
 ) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 10)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 10),
+        CpuArchitecture::ARM => false,
+    }
 }
 
 pub fn max_overflow_flag_set(
@@ -320,7 +379,10 @@ pub fn max_overflow_flag_set(
     _: Option<usize>,
     _: Option<usize>,
 ) -> bool {
-    is_flag_bit_set(instruction, Selector::RegMax, 11)
+    match instruction.arch {
+        CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 11),
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMax, 28),
+    }
 }
 
 pub fn num_successors_greater(

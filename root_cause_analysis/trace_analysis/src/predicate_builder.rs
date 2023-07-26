@@ -1,13 +1,21 @@
+use crate::config::CpuArchitecture;
 use crate::control_flow_graph::ControlFlowGraph;
 use crate::predicate_synthesizer::{gen_reg_val_name, PredicateSynthesizer};
 use crate::predicates::*;
+use crate::register::{Register64 as RegisterX86, RegisterArm, REGISTERS_ARM, REGISTERS_X86};
 use crate::trace::Instruction;
-use crate::trace::{Selector, REGISTERS};
+use crate::trace::Selector;
 use crate::trace_analyzer::TraceAnalyzer;
 
-pub struct PredicateBuilder {}
+pub struct PredicateBuilder {
+    arch: CpuArchitecture,
+}
 
 impl PredicateBuilder {
+    pub fn new(arch: CpuArchitecture) -> PredicateBuilder {
+        PredicateBuilder { arch }
+    }
+
     fn gen_visited(address: usize) -> Vec<Predicate> {
         vec![Predicate::new(
             "is_visited",
@@ -43,8 +51,16 @@ impl PredicateBuilder {
         Predicate::new(&pred_name, address, func, Some(value), None)
     }
 
-    pub fn gen_flag_predicates(address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
-        if !trace_analyzer.any_instruction_at_address_contains_reg(address, 22) {
+    pub fn gen_flag_predicates(
+        &self,
+        address: usize,
+        trace_analyzer: &TraceAnalyzer,
+    ) -> Vec<Predicate> {
+        let flags_reg_idx = match self.arch {
+            CpuArchitecture::ARM => RegisterArm::xPSR as usize,
+            CpuArchitecture::X86_64 => RegisterX86::Eflags as usize,
+        };
+        if !trace_analyzer.any_instruction_at_address_contains_reg(address, flags_reg_idx) {
             return vec![];
         }
 
@@ -144,7 +160,7 @@ impl PredicateBuilder {
         ]
     }
 
-    pub fn gen_cfg_predicates(address: usize, cfg: &ControlFlowGraph) -> Vec<Predicate> {
+    pub fn gen_cfg_predicates(&self, address: usize, cfg: &ControlFlowGraph) -> Vec<Predicate> {
         let mut ret = vec![];
 
         // check if end of basic block
@@ -211,25 +227,49 @@ impl PredicateBuilder {
         ret
     }
 
-    pub fn gen_all_reg_val_predicates(
+    fn gen_all_reg_val_predicates(
+        &self,
         address: usize,
         trace_analyzer: &TraceAnalyzer,
         selector: &Selector,
         value: usize,
     ) -> Vec<Predicate> {
-        (0..REGISTERS.len())
+        let regs = match self.arch {
+            CpuArchitecture::ARM => &*REGISTERS_ARM,
+            CpuArchitecture::X86_64 => &*REGISTERS_X86,
+        };
+        (0..regs.len())
             .into_iter()
             .filter(|reg_index| {
                 trace_analyzer.any_instruction_at_address_contains_reg(address, *reg_index)
             })
-            /* skip RSP */
-            .filter(|reg_index| *reg_index != 7)
-            /* skip EFLAGS */
-            .filter(|reg_index| *reg_index != 22)
+            .filter(|reg_index| {
+                match self.arch {
+                    /* skip RSP */
+                    CpuArchitecture::X86_64 => *reg_index != RegisterX86::Rsp as usize,
+                    /* skip sp */
+                    CpuArchitecture::ARM => *reg_index != (RegisterArm::SP as usize),
+                }
+            })
+            .filter(|reg_index| {
+                match self.arch {
+                    /* skip EFLAGS */
+                    /* -1 as x86_64 has no rip in registers */
+                    CpuArchitecture::X86_64 => *reg_index != (RegisterX86::Eflags as usize - 1),
+                    CpuArchitecture::ARM => {
+                        *reg_index != (RegisterArm::xPSR as usize)
+                            && *reg_index != (RegisterArm::CPSR as usize)
+                    }
+                }
+            })
             /* skip memory address */
-            .filter(|reg_index| *reg_index != 23)
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::X86_64 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
+                CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
+            })
             .map(|reg_index| {
                 let pred_name = gen_reg_val_name(
+                    self.arch,
                     Some(reg_index),
                     selector_val_less_name(selector),
                     value as u64,
@@ -246,55 +286,56 @@ impl PredicateBuilder {
     }
 
     pub fn gen_register_predicates(
+        &self,
         address: usize,
         trace_analyzer: &TraceAnalyzer,
     ) -> Vec<Predicate> {
         let mut ret = vec![];
 
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMax,
             0xffffffffffffffff,
         ));
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMax,
             0xffffffff,
         ));
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMax,
             0xffff,
         ));
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMax,
             0xff,
         ));
 
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMin,
             0xffffffffffffffff,
         ));
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMin,
             0xffffffff,
         ));
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMin,
             0xffff,
         ));
-        ret.extend(PredicateBuilder::gen_all_reg_val_predicates(
+        ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
             &Selector::RegMin,
@@ -304,7 +345,7 @@ impl PredicateBuilder {
         ret
     }
 
-    pub fn gen_predicates(address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
+    pub fn gen_predicates(&self, address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
         let mut ret = vec![];
 
         let skip_register_predicates =
@@ -313,27 +354,16 @@ impl PredicateBuilder {
         ret.extend(PredicateBuilder::gen_visited(address));
 
         if !skip_register_predicates {
-            ret.extend(PredicateSynthesizer::constant_predicates_at_address(
-                address,
-                trace_analyzer,
-            ));
+            let ps = PredicateSynthesizer::new(self.arch);
+            ret.extend(ps.constant_predicates_at_address(address, trace_analyzer));
 
-            ret.extend(PredicateBuilder::gen_register_predicates(
-                address,
-                &trace_analyzer,
-            ));
+            ret.extend(self.gen_register_predicates(address, &trace_analyzer));
         }
 
-        ret.extend(PredicateBuilder::gen_cfg_predicates(
-            address,
-            &trace_analyzer.cfg,
-        ));
+        ret.extend(self.gen_cfg_predicates(address, &trace_analyzer.cfg));
 
         if !skip_register_predicates {
-            ret.extend(PredicateBuilder::gen_flag_predicates(
-                address,
-                &trace_analyzer,
-            ));
+            ret.extend(self.gen_flag_predicates(address, &trace_analyzer));
         }
 
         ret

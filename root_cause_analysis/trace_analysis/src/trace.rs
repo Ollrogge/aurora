@@ -1,3 +1,4 @@
+use crate::register::{Register64 as RegisterX86, RegisterArm, REGISTERS_X86};
 use anyhow::{Context, Result};
 use bincode;
 use serde::{Deserialize, Serialize};
@@ -6,40 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 
-#[cfg(feature = "arm")]
-pub static REGISTERS: [&str; 19] = [
-    "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "sp", "lr",
-    "pc", "xPSR", "CPSR", "SPSR",
-];
-
-#[cfg(not(feature = "arm"))]
-pub static REGISTERS: [&str; 25] = [
-    "rax",
-    "rbx",
-    "rcx",
-    "rdx",
-    "rsi",
-    "rdi",
-    "rbp",
-    "rsp",
-    "r8",
-    "r9",
-    "r10",
-    "r11",
-    "r12",
-    "r13",
-    "r14",
-    "r15",
-    "seg_cs",
-    "seg_ss",
-    "seg_ds",
-    "seg_es",
-    "seg_fs",
-    "seg_gs",
-    "eflags",
-    "memory_address",
-    "memory_value",
-];
+use crate::config::CpuArchitecture;
 
 pub enum Selector {
     RegMin,
@@ -143,6 +111,7 @@ pub struct Instruction {
     pub registers_min: Registers,
     pub registers_max: Registers,
     pub successors: Vec<Successor>,
+    pub arch: CpuArchitecture,
 }
 
 impl Instruction {
@@ -151,18 +120,18 @@ impl Instruction {
         ret.push_str(&format!("{:#018x};", self.address));
         ret.push_str(&format!("{};", self.mnemonic));
 
-        for index in 0..REGISTERS.len() {
+        for index in 0..REGISTERS_X86.len() {
             if let Some(register) = self.registers_min.get(index) {
                 ret.push_str(&format!(
                     "{}: {};",
-                    REGISTERS[index],
+                    REGISTERS_X86[index],
                     register.to_string_extended()
                 ));
             }
             if let Some(register) = self.registers_max.get(index) {
                 ret.push_str(&format!(
                     "{}: {};",
-                    REGISTERS[index],
+                    REGISTERS_X86[index],
                     register.to_string_extended()
                 ));
             }
@@ -189,26 +158,45 @@ pub struct SerializedInstruction {
 }
 
 impl SerializedInstruction {
-    fn add_mem_to_registers(&self) -> (Registers, Registers, Registers) {
+    fn add_mem_to_registers(&self, arch: CpuArchitecture) -> (Registers, Registers, Registers) {
         let mut registers_min = self.registers_min.clone();
         let mut registers_max = self.registers_max.clone();
         let mut registers_last = self.registers_last.clone();
 
         if let Some(memory) = &self.memory {
-            registers_min.insert(23, Register::new("memory_address", memory.min_address));
-            registers_max.insert(23, Register::new("memory_address", memory.max_address));
-            registers_last.insert(23, Register::new("memory_address", memory.last_address));
+            let (address_idx, value_idx) = match arch {
+                CpuArchitecture::ARM => (
+                    RegisterArm::MemoryAddress as usize,
+                    RegisterArm::MemoryValue as usize,
+                ),
+                CpuArchitecture::X86_64 => (
+                    RegisterX86::MemoryAddress as usize - 1,
+                    RegisterX86::MemoryValue as usize - 1,
+                ),
+            };
+            registers_min.insert(
+                address_idx,
+                Register::new("memory_address", memory.min_address),
+            );
+            registers_max.insert(
+                address_idx,
+                Register::new("memory_address", memory.max_address),
+            );
+            registers_last.insert(
+                address_idx,
+                Register::new("memory_address", memory.last_address),
+            );
 
-            registers_min.insert(24, Register::new("memory_value", memory.min_value));
-            registers_max.insert(24, Register::new("memory_value", memory.max_value));
-            registers_last.insert(24, Register::new("memory_value", memory.last_value));
+            registers_min.insert(value_idx, Register::new("memory_value", memory.min_value));
+            registers_max.insert(value_idx, Register::new("memory_value", memory.max_value));
+            registers_last.insert(value_idx, Register::new("memory_value", memory.last_value));
         }
 
         (registers_min, registers_max, registers_last)
     }
 
-    pub fn to_instruction(&self) -> Instruction {
-        let (registers_min, registers_max, _) = self.add_mem_to_registers();
+    pub fn to_instruction(&self, arch: CpuArchitecture) -> Instruction {
+        let (registers_min, registers_max, _) = self.add_mem_to_registers(arch);
 
         Instruction {
             address: self.address,
@@ -216,6 +204,7 @@ impl SerializedInstruction {
             registers_min,
             registers_max,
             successors: vec![],
+            arch: arch,
         }
     }
 }
@@ -243,11 +232,11 @@ pub struct SerializedTrace {
 }
 
 impl SerializedTrace {
-    pub fn to_trace(name: String, serialized: SerializedTrace) -> Trace {
+    pub fn to_trace(name: String, serialized: SerializedTrace, arch: CpuArchitecture) -> Trace {
         let mut instructions: HashMap<usize, Instruction> = serialized
             .instructions
             .into_iter()
-            .map(|instr| (instr.address, instr.to_instruction()))
+            .map(|instr| (instr.address, instr.to_instruction(arch)))
             .collect();
         for edge in &serialized.edges {
             if let Some(entry) = instructions.get_mut(&edge.from) {
@@ -279,7 +268,7 @@ impl Successor {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct Trace {
     pub name: String,
     pub image_base: usize,
@@ -289,13 +278,13 @@ pub struct Trace {
 }
 
 impl Trace {
-    pub fn from_trace_file(file_path: String) -> Trace {
+    pub fn from_trace_file(file_path: String, arch: CpuArchitecture) -> Trace {
         let content =
             fs::read_to_string(&file_path).expect(&format!("File {} not found!", &file_path));
-        Trace::from_file(file_path, content)
+        Trace::from_file(file_path, content, arch)
     }
 
-    pub fn from_zip_file(file_path: String) -> Trace {
+    pub fn from_zip_file(file_path: String, arch: CpuArchitecture) -> Trace {
         let zip_file =
             fs::File::open(&file_path).expect(&format!("Could not open file {}", &file_path));
         let mut zip_archive = zip::ZipArchive::new(zip_file)
@@ -309,19 +298,19 @@ impl Trace {
             .read_to_string(&mut trace_content)
             .expect(&format!("Could not read unzipped file {}", trace_file_path));
 
-        Trace::from_file(trace_file_path, trace_content)
+        Trace::from_file(trace_file_path, trace_content, arch)
     }
 
-    fn from_file(file_path: String, content: String) -> Trace {
+    fn from_file(file_path: String, content: String, arch: CpuArchitecture) -> Trace {
         let serialized_trace: SerializedTrace = serde_json::from_str(&content)
             .expect(&format!("Could not deserialize file {}", &file_path));
-        SerializedTrace::to_trace(file_path, serialized_trace)
+        SerializedTrace::to_trace(file_path, serialized_trace, arch)
     }
 
-    pub fn from_bin_file(file_path: String) -> Trace {
+    pub fn from_bin_file(file_path: String, arch: CpuArchitecture) -> Trace {
         let data = fs::read(&file_path).expect(&format!("Unable to read bin file: {}", file_path));
         let serialized_trace: SerializedTrace = bincode::deserialize(&data).unwrap();
-        SerializedTrace::to_trace(file_path, serialized_trace)
+        SerializedTrace::to_trace(file_path, serialized_trace, arch)
     }
 
     pub fn visited_addresses(&self) -> HashSet<usize> {

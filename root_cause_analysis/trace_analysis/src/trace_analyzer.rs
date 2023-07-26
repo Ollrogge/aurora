@@ -1,4 +1,4 @@
-use crate::config::{Config, TraceFormat};
+use crate::config::{Config, CpuArchitecture, TraceFormat};
 use crate::control_flow_graph::{CFGCollector, ControlFlowGraph};
 use crate::predicate_analysis::PredicateAnalyzer;
 use crate::predicates::{Predicate, SerializedPredicate};
@@ -104,7 +104,7 @@ fn parse_traces(
         TraceFormat::JSON => TraceVec::from_vec(
             paths
                 .into_par_iter()
-                .map(|s| Trace::from_trace_file(s))
+                .map(|s| Trace::from_trace_file(s, config.cpu_architecture))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -116,7 +116,7 @@ fn parse_traces(
         TraceFormat::ZIP => TraceVec::from_vec(
             paths
                 .into_par_iter()
-                .map(|s| Trace::from_zip_file(s))
+                .map(|s| Trace::from_zip_file(s, config.cpu_architecture))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -128,7 +128,7 @@ fn parse_traces(
         TraceFormat::BIN => TraceVec::from_vec(
             paths
                 .into_par_iter()
-                .map(|s| Trace::from_bin_file(s))
+                .map(|s| Trace::from_bin_file(s, config.cpu_architecture))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -142,7 +142,6 @@ fn parse_traces(
 
 impl TraceAnalyzer {
     pub fn new(config: &Config) -> TraceAnalyzer {
-        println!("reading crashes");
         let crash_blacklist =
             read_crash_blacklist(config.blacklist_crashes(), &config.crash_blacklist_path);
         let crashes = parse_traces(&config.path_to_crashes, config, None, crash_blacklist);
@@ -151,7 +150,6 @@ impl TraceAnalyzer {
             false => None,
         };
 
-        println!("reading non-crashes");
         let non_crashes = parse_traces(
             &config.path_to_non_crashes,
             config,
@@ -181,13 +179,14 @@ impl TraceAnalyzer {
 
         if config.check_traces {
             println!("checking traces");
-            TraceIntegrityChecker::check_traces(&trace_analyzer);
+            let ti = TraceIntegrityChecker::new(config.cpu_architecture);
+            ti.check_traces(&trace_analyzer);
             exit(0);
         }
 
         if config.dump_scores {
             println!("calculating scores");
-            trace_analyzer.fill_address_scores();
+            trace_analyzer.fill_address_scores(config.cpu_architecture);
         }
 
         trace_analyzer
@@ -207,14 +206,14 @@ impl TraceAnalyzer {
         self.cfg = cfg_collector.construct_graph();
     }
 
-    fn fill_address_scores(&mut self) {
+    fn fill_address_scores(&mut self, arch: CpuArchitecture) {
         let addresses = self.crash_non_crash_intersection();
         self.address_scores = addresses
             .into_par_iter()
             .map(|address| {
                 (
                     address,
-                    PredicateAnalyzer::evaluate_best_predicate_at_address(address, self),
+                    PredicateAnalyzer::evaluate_best_predicate_at_address(address, self, arch),
                 )
             })
             .collect();

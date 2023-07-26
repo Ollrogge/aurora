@@ -5,6 +5,7 @@ pub mod predicate_analysis;
 pub mod predicate_builder;
 pub mod predicate_synthesizer;
 pub mod predicates;
+pub mod register;
 pub mod trace;
 pub mod trace_analyzer;
 pub mod trace_integrity;

@@ -19,6 +19,7 @@ itertools="*"
 rayon="*"
 bincode = "*"
 anyhow = "*"
+capstone ="*"
 
 [[bin]]
 name = "rca"

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::num::ParseIntError;
 use std::str::FromStr;
@@ -34,6 +35,24 @@ impl FromStr for TraceFormat {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum CpuArchitecture {
+    X86_64,
+    ARM,
+}
+
+impl FromStr for CpuArchitecture {
+    type Err = Box<dyn Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_uppercase().as_str() {
+            "X86_64" => Ok(CpuArchitecture::X86_64),
+            "ARM" => Ok(CpuArchitecture::ARM),
+            _ => Err(format!("Invalid cpu arch: {}", s).into()),
+        }
+    }
+}
+
 #[derive(StructOpt)]
 pub struct Config {
     #[structopt(index = 1, help = "Path to traces of crashing inputs")]
@@ -50,6 +69,13 @@ pub struct Config {
     pub dump_traces: bool,
     #[structopt(short = "s", long = "scores", help = "Dumps instruction scores")]
     pub dump_scores: bool,
+    #[structopt(
+        long = "cpu_architecture",
+        default_value = "arm",
+        case_insensitive = true,
+        help = "Trace format of file"
+    )]
+    pub cpu_architecture: CpuArchitecture,
     #[structopt(
         long = "trace_format",
         default_value = "zip",
@@ -107,6 +133,7 @@ impl Config {
             dump_traces: false,
             dump_scores: true,
             trace_format: TraceFormat::BIN,
+            cpu_architecture: CpuArchitecture::ARM,
             dump_address: 0,
             random_traces: 0,
             filter_non_crashes: false,

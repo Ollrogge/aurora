@@ -1,3 +1,4 @@
+use crate::config::CpuArchitecture;
 use crate::predicate_builder::PredicateBuilder;
 use crate::predicates::Predicate;
 
@@ -10,8 +11,10 @@ impl PredicateAnalyzer {
     pub fn evaluate_best_predicate_at_address(
         address: usize,
         trace_analyzer: &TraceAnalyzer,
+        arch: CpuArchitecture,
     ) -> Predicate {
-        let predicates = PredicateBuilder::gen_predicates(address, trace_analyzer);
+        let pb = PredicateBuilder::new(arch);
+        let predicates = pb.gen_predicates(address, trace_analyzer);
 
         if predicates.is_empty() {
             return Predicate::gen_empty(address);

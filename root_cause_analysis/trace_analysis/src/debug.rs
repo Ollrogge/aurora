@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::config::CpuArchitecture;
 use crate::predicate_analysis::PredicateAnalyzer;
 use crate::trace::Trace;
 use crate::trace_analyzer::TraceAnalyzer;
@@ -52,8 +53,13 @@ pub fn dump_trace_info(config: &Config, trace_analyzer: &TraceAnalyzer) {
     );
 }
 
+// todo: do I need this
 pub fn debug_predicate_at_address(address: usize, trace_analyzer: &TraceAnalyzer) {
-    let predicate = PredicateAnalyzer::evaluate_best_predicate_at_address(address, trace_analyzer);
+    let predicate = PredicateAnalyzer::evaluate_best_predicate_at_address(
+        address,
+        trace_analyzer,
+        CpuArchitecture::X86_64,
+    );
 
     println!(
         "0x{:x} -- {} -- {}",

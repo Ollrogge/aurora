@@ -1,14 +1,19 @@
 use crate::config::Config;
 use crate::rankings::serialize_rankings;
 use crate::utils::{glob_paths, read_file};
-use anyhow::{Context, Result};
-use predicate_monitoring::rank_predicates;
+use anyhow::{anyhow, Context, Result};
+use capstone::arch::arm::{self, ArmInsn, ArmOperandType};
+use capstone::prelude::*;
+use itertools::Itertools;
+use predicate_monitoring::{rank_predicates, rank_predicates_arm};
 use rayon::prelude::*;
+use std::convert::TryFrom;
 use std::fs::File;
 use std::fs::{self, read, read_to_string, remove_file};
 use std::process::{Child, Command, Stdio};
 use std::time::Instant;
 use trace_analysis::predicates::SerializedPredicate;
+use trace_analysis::register::user_regs_struct_arm;
 use trace_analysis::trace_analyzer::{blacklist_path, read_crash_blacklist};
 
 pub fn monitor_predicates(config: &Config) -> Result<()> {
@@ -41,13 +46,18 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
 
         let predicates = deserialize_predicates(predicate_file);
 
+        // go through the detailed trace of every crashing input and check
+        // their fulfillment
         rankings = glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
             .into_par_iter()
             .enumerate()
             .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
-            .filter_map(|(index, path)| monitor_arm(path, &binary, &predicates).ok())
-            .filter(|r| !r.is_empty())
-            .collect();
+            .map(|(index, path)| monitor_arm(path, &binary, &predicates))
+            .filter(|r| match r {
+                Ok(val) => !val.is_empty(),
+                Err(_) => true,
+            })
+            .collect::<Result<Vec<_>, _>>()?;
     }
 
     serialize_rankings(config, &rankings);
@@ -72,11 +82,28 @@ pub fn monitor_arm(
     predicates: &Vec<SerializedPredicate>,
 ) -> Result<Vec<usize>> {
     let f = File::open(input_path).context("open monitor file")?;
-    // TODO: dont hardcode register amount
-    let detailed_trace: Vec<(usize, [u32; 18])> =
+    let detailed_trace: Vec<Vec<u32>> =
         bincode::deserialize_from(f).context("bincode deserialize")?;
 
-    Ok(rank_predicates(predicates, detailed_trace, binary))
+    let regs: Result<Vec<_>, _> = detailed_trace
+        .into_iter()
+        .map(|trace| {
+            user_regs_struct_arm::try_from(trace)
+                .map_err(|_| anyhow!("unable to get user_regs_struct_arm"))
+        })
+        .collect();
+
+    let regs = regs?;
+
+    let cs = Capstone::new()
+        .arm()
+        .mode(arm::ArchMode::Thumb)
+        .detail(true)
+        .endian(capstone::Endian::Little)
+        .build()
+        .expect("failed to init capstone");
+
+    rank_predicates_arm(cs, predicates, regs, binary)
 }
 
 pub fn monitor(

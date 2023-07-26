@@ -1,18 +1,24 @@
+mod arm;
 mod predicate;
-mod register;
 mod rflags;
 
+use anyhow::{anyhow, Context, Result};
+use arm::xpsr_flags::XPSR_Flags;
+use capstone::arch::arm::{ArmInsn, ArmOperandType};
+use capstone::prelude::*;
 use log::{debug, error, info, trace, warn};
 use nix::sys::wait::WaitStatus;
 use nix::unistd::Pid;
 use predicate::*;
 use ptracer::{ContinueMode, Ptracer};
-use register::RegisterValue;
 use rflags::RFlags;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::path::Path;
 use std::time::Instant;
 use trace_analysis::predicates::SerializedPredicate;
+use trace_analysis::register::{user_regs_struct_arm, RegisterValue};
+
 use zydis::*;
 
 fn new_decoder() -> Decoder {
@@ -62,11 +68,85 @@ pub struct RootCauseCandidate {
 }
 
 impl RootCauseCandidate {
+    // function is called on rootcause candidates for prev.pc, therefore if
+    // prev.pc is e.g. a mov inst then reg.value(cur) checks the value after the mov
+    pub fn satisfied_arm(
+        &self,
+        prev: &user_regs_struct_arm,
+        cur: &user_regs_struct_arm,
+    ) -> Result<bool> {
+        let old_rip = prev.pc;
+        let new_rip = cur.pc;
+
+        println!("Regs: cpsr:{:x} xpsr: {:x}", prev.cpsr, prev.xpsr);
+        let xpsr_flags = XPSR_Flags::from_bits_truncate(cur.xpsr);
+        match &self.predicate {
+            // todo: explain the cases with comments
+            Predicate::Compare(ref compare) => {
+                let value = match compare.destination {
+                    ValueDestination::Register(ref reg) => reg.value(cur),
+                    // todo: check why memory called on prev
+                    ValueDestination::Address(ref mem) => mem.address(prev),
+                    ValueDestination::Memory(ref access_size, ref mem) => {
+                        let address = mem.address(prev);
+                        debug!("address = {:#018x}", address);
+
+                        println!("Memory read. Not implemented {:#018x}", address);
+                        unimplemented!();
+
+                        0
+
+                        /*
+
+                        let value = ptracer::read(
+                            dbg.event().pid().expect("pid missing"),
+                            address as nix::sys::ptrace::AddressType,
+                        )
+                        .expect("failed to read memory value")
+                            as usize;
+                        debug!("raw value = {:#018x}", value);
+
+                        match 1usize.checked_shl(*access_size as u32) {
+                            Some(mask) => value & mask,
+                            _ => value,
+                        }
+                        */
+                    }
+                };
+                debug!(
+                    "value = {:#018x}, compare.value = {:#018x}",
+                    value, compare.value
+                );
+
+                Ok(match compare.compare {
+                    Compare::Equal => value == compare.value,
+                    Compare::Greater => value > compare.value,
+                    Compare::GreaterOrEqual => value >= compare.value,
+                    Compare::Less => value < compare.value,
+                    Compare::NotEqual => value != compare.value,
+                })
+            }
+            Predicate::Edge(ref edge) => match edge.transition {
+                EdgeTransition::Taken => {
+                    Ok(old_rip as usize == edge.source && new_rip as usize == edge.destination)
+                }
+                EdgeTransition::NotTaken => {
+                    Ok(old_rip as usize == edge.source && new_rip as usize != edge.destination)
+                }
+            },
+            Predicate::Visited => Ok(true),
+            Predicate::FlagSet(flag) => match flag {
+                CpuFlags::ARM(flag) => Ok(xpsr_flags.contains(*flag)),
+                CpuFlags::X86(_) => Err(anyhow!("x86 flags in arm code")),
+            },
+        }
+    }
+
     pub fn satisfied(
         &self,
         dbg: &mut Ptracer,
         old_registers: &nix::libc::user_regs_struct,
-    ) -> nix::Result<bool> {
+    ) -> Result<bool> {
         let old_rip = old_registers.rip;
         let new_rip = dbg.registers.rip;
         debug!("old_rip = {:#018x}, new_rip = {:#018x}", old_rip, new_rip);
@@ -92,13 +172,13 @@ impl RootCauseCandidate {
             );
         }
 
-        match self.predicate {
+        match &self.predicate {
             Predicate::Compare(ref compare) => {
                 let value = match compare.destination {
                     ValueDestination::Register(ref reg) => reg.value(&dbg.registers),
-                    ValueDestination::Address(ref mem) => mem.address(&old_registers),
+                    ValueDestination::Address(ref mem) => mem.address(old_registers),
                     ValueDestination::Memory(ref access_size, ref mem) => {
-                        let address = mem.address(&old_registers);
+                        let address = mem.address(old_registers);
                         debug!("address = {:#018x}", address);
 
                         let value = ptracer::read(
@@ -115,7 +195,6 @@ impl RootCauseCandidate {
                         }
                     }
                 };
-                let value = 0x0;
                 debug!(
                     "value = {:#018x}, compare.value = {:#018x}",
                     value, compare.value
@@ -138,7 +217,10 @@ impl RootCauseCandidate {
                 }
             },
             Predicate::Visited => Ok(true),
-            Predicate::FlagSet(flag) => Ok(rflags.contains(flag)),
+            Predicate::FlagSet(flag) => match flag {
+                CpuFlags::X86(flag) => Ok(rflags.contains(*flag)),
+                CpuFlags::ARM(_) => Err(anyhow!("arm flags in x86 code")),
+            },
         }
     }
 }
@@ -169,7 +251,6 @@ fn convert_predicates(
                 println!("{:#018x} {}", dbg.registers.rip, buffer);
             }
             trace!("{:#018x?} -> {:?}", address, instr);
-
             let converted = predicate::convert_predicate(&pred.name, instr).and_then(|predicate| {
                 Some(RootCauseCandidate {
                     address,
@@ -385,6 +466,73 @@ pub fn rank_predicates(
 
     let satisfaction = collect_satisfied(&decoder, &mut dbg, &mut rccs, timeout);
     satisfaction.into_iter().map(|(addr, _)| addr).collect()
+}
+
+pub fn rank_predicates_arm(
+    cs: Capstone,
+    predicates: &Vec<SerializedPredicate>,
+    detailed_trace: Vec<user_regs_struct_arm>,
+    binary: &Vec<u8>,
+) -> Result<Vec<usize>> {
+    let rccs: HashMap<usize, RootCauseCandidate> = predicates
+        .into_iter()
+        .map(|pred| {
+            let address = pred.address;
+
+            let insts = cs
+                .disasm_count(binary, address as u64, 1)
+                .map_err(|_| anyhow!("disasm_count"))?;
+
+            let isn = insts.iter().next().context("iter.next()")?;
+
+            let detail = cs
+                .insn_detail(isn)
+                .map_err(|_| anyhow!("unable to obtain isn_detail"))?;
+
+            let converted = predicate::convert_predicate_arm(&pred.name, detail)
+                .context("convert_predicate")?
+                .and_then(|predicate| {
+                    Some(RootCauseCandidate {
+                        address,
+                        score: pred.score,
+                        predicate,
+                    })
+                });
+
+            Ok(converted)
+        })
+        .filter_map(
+            |pred: Result<Option<RootCauseCandidate>, anyhow::Error>| match pred {
+                Ok(pred) => pred,
+                Err(err) => {
+                    warn!("Error while trying to convert predicate: {:?}", err);
+                    None
+                }
+            },
+        )
+        .map(|pred| (pred.address, pred))
+        .collect();
+
+    let mut satisfaction = vec![];
+    for window in detailed_trace.windows(2) {
+        match window {
+            [prev, cur] => {
+                let pc = prev.pc as usize;
+                if let Some(rcc) = rccs.get(&pc) {
+                    let satisfied = rcc.satisfied_arm(&prev, &cur).context("satisfied arm")?;
+
+                    if satisfied {
+                        satisfaction.push((rcc.address, rcc.predicate.clone()));
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
+    info!("rccs = {:#018x?}", rccs);
+
+    Ok(satisfaction.into_iter().map(|(addr, _)| addr).collect())
 }
 
 pub fn spawn_dbg(path: &Path, args: &[String]) -> Ptracer {

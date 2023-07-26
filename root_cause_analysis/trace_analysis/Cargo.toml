@@ -17,6 +17,10 @@ zip = "*"
 rand="*"
 bincode="*"
 anyhow="*"
+zydis = "^3.0"
+capstone="*"
+nix = "^0.15"
+lazy_static = "*"
 
 [features]
 default = ["arm"]

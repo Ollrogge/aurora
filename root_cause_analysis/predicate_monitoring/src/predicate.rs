@@ -1,7 +1,8 @@
 use nix::libc::user_regs_struct;
 use std::str::FromStr;
 
-use super::register::{Register, RegisterArm, RegisterValue, RegisterX86};
+use crate::arm::xpsr_flags::XPSR_Flags;
+
 use super::rflags::RFlags;
 use anyhow::{Context, Result};
 use capstone::{
@@ -10,12 +11,19 @@ use capstone::{
     prelude::*,
     RegId,
 };
+use trace_analysis::register::{Register, RegisterArm, RegisterStruct, RegisterValue, RegisterX86};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CpuFlags {
+    ARM(XPSR_Flags),
+    X86(RFlags),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Predicate {
     Compare(ComparePredicate),
     Edge(EdgePredicate),
-    FlagSet(RFlags),
+    FlagSet(CpuFlags),
     Visited,
 }
 
@@ -78,7 +86,7 @@ impl MemoryLocation {
 }
 
 impl MemoryLocation {
-    pub fn address(&self, registers: &user_regs_struct) -> usize {
+    pub fn address(&self, registers: &dyn RegisterStruct) -> usize {
         let address = self
             .base
             .and_then(|reg| Some(reg.value(registers)))
@@ -248,7 +256,7 @@ pub fn convert_predicate(
             _ => unimplemented!(),
         };
 
-        return Some(Predicate::FlagSet(flag));
+        return Some(Predicate::FlagSet(CpuFlags::X86(flag)));
     } else if function == "is_visited" {
         return Some(Predicate::Visited);
     } else {
@@ -270,11 +278,15 @@ pub fn convert_predicate_arm(
         _ => unimplemented!(),
     };
 
-    let arch_detail = instruction
-        .arch_detail()
+    println!("Convert predicate parts: {:?}", parts);
+
+    let arch_detail = instruction.arch_detail();
+
+    let arm_isn_detail = arch_detail
         .arm()
         .context("instruction is not an arm inst")?;
 
+    // edge
     if function.contains("edge") {
         let source = usize::from_str_radix(&parts[0][2..], 16).expect("failed to parse source");
         let destination =
@@ -286,15 +298,23 @@ pub fn convert_predicate_arm(
             _ => unimplemented!(),
         };
 
+        log::info!(
+            "edge predicate: {:?} {:?} {:?}",
+            source,
+            transition,
+            destination
+        );
+
         return Ok(Some(Predicate::Edge(EdgePredicate {
             source,
             transition,
             destination,
         })));
+    // compare: <destination> <compare-type> <value>
     } else if function.contains("reg_val") {
         let value = usize::from_str_radix(&parts[2][2..], 16).expect("failed to parse value");
         let memory_locations =
-            arch_detail
+            arm_isn_detail
                 .operands()
                 .into_iter()
                 .filter_map(|op| match op.op_type {
@@ -302,10 +322,78 @@ pub fn convert_predicate_arm(
                     _ => None,
                 });
 
+        log::info!(
+            "reg_val memory locations: {:?} parts: {:?}",
+            memory_locations,
+            parts
+        );
+
         let memory = memory_locations
             .last()
-            .and_then(|op| Some(MemoryLocation::from_arm_op_mem(op)))
-            .context("Unable to create memory location")?;
+            .and_then(|op| Some(MemoryLocation::from_arm_op_mem(op)));
+
+        let destination = match parts[0] {
+            "memory_address" => ValueDestination::Address(memory.expect("no memory location")),
+            // todo: is operand_width always 4 byte ?
+            "memory_value" => ValueDestination::Memory(4, memory.expect("no memory location")),
+            register => ValueDestination::Register(
+                Register::from_str(register).expect("failed to parse register"),
+            ),
+        };
+
+        let compare = match function {
+            "min_reg_val_less" => Compare::Less,
+            "max_reg_val_less" => Compare::Less,
+            "last_reg_val_less" => return Ok(None),
+            "max_min_diff_reg_val_less" => return Ok(None),
+
+            "min_reg_val_greater_or_equal" => Compare::GreaterOrEqual,
+            "max_reg_val_greater_or_equal" => Compare::GreaterOrEqual,
+            "last_reg_val_greater_or_equal" => return Ok(None),
+            "max_min_diff_reg_val_greater_or_equal" => return Ok(None),
+
+            _ => unimplemented!(),
+        };
+
+        return Ok(Some(Predicate::Compare(ComparePredicate {
+            destination,
+            compare,
+            value,
+        })));
+    } else if function.contains("ins_count") {
+        // "ins_count_less"
+        // "ins_count_greater_or_equal"
+    } else if function.contains("selector_val") {
+        // "selector_val_less_name"
+        // "selector_val_less"
+        // "selector_val_greater_or_equal_name"
+        // "selector_val_greater_or_equal"
+    } else if function.contains("num_successors") {
+        // "num_successors_greater" =>
+        // "num_successors_equal" =>
+    } else if function.contains("flag") {
+        let flag = match function {
+            "min_carry_flag_set" => XPSR_Flags::CARRY_FLAG,
+            "min_zero_flag_set" => XPSR_Flags::ZERO_FLAG,
+            "min_sign_flag_set" => XPSR_Flags::SIGN_FLAG,
+            "min_overflow_flag_set" => XPSR_Flags::OVERFLOW_FLAG,
+            "min_saturation_flag_set" => XPSR_Flags::SATURATION_FLAG,
+
+            "max_carry_flag_set" => XPSR_Flags::CARRY_FLAG,
+            "max_zero_flag_set" => XPSR_Flags::ZERO_FLAG,
+            "max_sign_flag_set" => XPSR_Flags::SIGN_FLAG,
+            "max_overflow_flag_set" => XPSR_Flags::OVERFLOW_FLAG,
+            "max_saturation_flag_set" => XPSR_Flags::SATURATION_FLAG,
+
+            "last_carry_flag_set" => return Ok(None),
+            "last_zero_flag_set" => return Ok(None),
+            "last_sign_flag_set" => return Ok(None),
+            "last_overflow_flag_set" => return Ok(None),
+            "last_saturation_flag_set" => return Ok(None),
+            _ => unimplemented!(),
+        };
+
+        return Ok(Some(Predicate::FlagSet(CpuFlags::ARM(flag))));
     }
 
     Ok(None)

@@ -22,8 +22,15 @@ fn main() {
 
     if config.monitor_predicates {
         println!("monitoring predicates");
-        let monitoring_time = Instant::now();
-        monitor_predicates(&config);
+        let monitoring_time: Instant = Instant::now();
+        let res = monitor_predicates(&config);
+        match res {
+            Ok(_) => (),
+            Err(e) => {
+                println!("error while monitoring predicates: {:?}", e);
+                return;
+            }
+        }
         println!(
             "monitoring time: {} seconds",
             monitoring_time.elapsed().as_secs_f64()

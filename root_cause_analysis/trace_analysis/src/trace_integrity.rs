@@ -1,29 +1,34 @@
-use crate::trace::REGISTERS;
-use crate::trace_analyzer::TraceAnalyzer;
+use crate::register::{REGISTERS_ARM, REGISTERS_X86};
+use crate::{config::CpuArchitecture, trace_analyzer::TraceAnalyzer};
 use std::collections::HashSet;
 
-pub struct TraceIntegrityChecker {}
+pub struct TraceIntegrityChecker {
+    arch: CpuArchitecture,
+}
 
 impl TraceIntegrityChecker {
-    pub fn check_traces(trace_analyzer: &TraceAnalyzer) {
-        TraceIntegrityChecker::cfg_empty(trace_analyzer);
-        TraceIntegrityChecker::cfg_heads(trace_analyzer);
-        TraceIntegrityChecker::cfg_leaves(trace_analyzer);
-        TraceIntegrityChecker::cfg_head_equals_first_instruction(trace_analyzer);
-        TraceIntegrityChecker::cfg_addresses_unique(trace_analyzer);
-        TraceIntegrityChecker::instruction_mnemonic_not_empty(trace_analyzer);
-        TraceIntegrityChecker::compare_reg_min_last_max(trace_analyzer);
-        TraceIntegrityChecker::untracked_memory_write(trace_analyzer);
+    pub fn new(arch: CpuArchitecture) -> TraceIntegrityChecker {
+        TraceIntegrityChecker { arch }
+    }
+    pub fn check_traces(&self, trace_analyzer: &TraceAnalyzer) {
+        self.cfg_empty(trace_analyzer);
+        self.cfg_heads(trace_analyzer);
+        self.cfg_leaves(trace_analyzer);
+        self.cfg_head_equals_first_instruction(trace_analyzer);
+        self.cfg_addresses_unique(trace_analyzer);
+        self.instruction_mnemonic_not_empty(trace_analyzer);
+        self.compare_reg_min_last_max(trace_analyzer);
+        self.untracked_memory_write(trace_analyzer);
     }
 
-    fn cfg_empty(trace_analyzer: &TraceAnalyzer) {
+    fn cfg_empty(&self, trace_analyzer: &TraceAnalyzer) {
         // cfg is not empty
         if trace_analyzer.cfg.is_empty() {
             println!("[E] CFG is empty");
         }
     }
 
-    fn cfg_heads(trace_analyzer: &TraceAnalyzer) {
+    fn cfg_heads(&self, trace_analyzer: &TraceAnalyzer) {
         let cfg_heads = trace_analyzer.cfg.heads();
         // there is only one cfg head (joint cfg of crashes and non-crashes)
         if cfg_heads.len() != 1 {
@@ -31,7 +36,7 @@ impl TraceIntegrityChecker {
         }
     }
 
-    fn cfg_leaves(trace_analyzer: &TraceAnalyzer) {
+    fn cfg_leaves(&self, trace_analyzer: &TraceAnalyzer) {
         // there is only one cfg exit
         // this assumption might not hold every time (crashes may have different leaves from non-crashes)
         if trace_analyzer.cfg.leaves().len() != 1 {
@@ -42,7 +47,7 @@ impl TraceIntegrityChecker {
         }
     }
 
-    fn cfg_head_equals_first_instruction(trace_analyzer: &TraceAnalyzer) {
+    fn cfg_head_equals_first_instruction(&self, trace_analyzer: &TraceAnalyzer) {
         let head = trace_analyzer.cfg.heads().pop().unwrap();
         for trace in trace_analyzer.iter_all_traces() {
             if head != trace.first_address {
@@ -52,7 +57,7 @@ impl TraceIntegrityChecker {
         }
     }
 
-    fn cfg_addresses_unique(trace_analyzer: &TraceAnalyzer) {
+    fn cfg_addresses_unique(&self, trace_analyzer: &TraceAnalyzer) {
         let cfg_addresses: Vec<usize> = trace_analyzer
             .cfg
             .bbs()
@@ -80,7 +85,7 @@ impl TraceIntegrityChecker {
         }
     }
 
-    fn instruction_mnemonic_not_empty(trace_analyzer: &TraceAnalyzer) {
+    fn instruction_mnemonic_not_empty(&self, trace_analyzer: &TraceAnalyzer) {
         // instruction mnemonic != ""
         for trace in trace_analyzer.iter_all_traces() {
             trace.instructions.values().for_each(|i| {
@@ -94,7 +99,7 @@ impl TraceIntegrityChecker {
         }
     }
 
-    fn untracked_memory_write(trace_analyzer: &TraceAnalyzer) {
+    fn untracked_memory_write(&self, trace_analyzer: &TraceAnalyzer) {
         for trace in trace_analyzer.iter_all_traces() {
             for instruction in trace.instructions.values() {
                 if instruction.mnemonic.contains("], ")
@@ -118,11 +123,15 @@ impl TraceIntegrityChecker {
         }
     }
 
-    fn compare_reg_min_last_max(trace_analyzer: &TraceAnalyzer) {
+    fn compare_reg_min_last_max(&self, trace_analyzer: &TraceAnalyzer) {
         // reg_min <= reg_last <= reg_max
         for trace in trace_analyzer.iter_all_traces() {
             for instruction in trace.instructions.values() {
-                (0..REGISTERS.len())
+                let regs = match self.arch {
+                    CpuArchitecture::ARM => &*REGISTERS_ARM,
+                    CpuArchitecture::X86_64 => &*REGISTERS_X86,
+                };
+                (0..regs.len())
                     .into_iter()
                     .filter(|i| instruction.registers_min.get(*i).is_some())
                     .for_each(|i| {
@@ -132,7 +141,7 @@ impl TraceIntegrityChecker {
 
                         if !(reg_min.value() <= reg_max.value()) {
                             println!("[E] min reg {} is not <= max reg for instruction {:x} in trace {}. Not re-running this check",
-                            REGISTERS[i],
+                            regs[i],
                             instruction.address,
                             trace.name);
                             return;

@@ -1,9 +1,11 @@
 use std::any::Any;
+use std::convert::TryFrom;
 use std::fmt;
 use std::str::FromStr;
 
-use capstone::arch::arm::ArmReg;
+use capstone::arch::arm::ArmReg::*;
 use capstone::RegId;
+use lazy_static::lazy_static;
 use nix::libc::user_regs_struct;
 use zydis::Register as ZydisRegister;
 
@@ -30,6 +32,62 @@ pub trait RegisterValue<T> {
     fn value(self, registers: &dyn RegisterStruct) -> T;
 }
 
+lazy_static! {
+    pub static ref REGISTERS_ARM: Vec<&'static str> = vec![
+        "r0",
+        "r1",
+        "r2",
+        "r3",
+        "r4",
+        "r5",
+        "r6",
+        "r7",
+        "r8",
+        "r9",
+        "r10",
+        "r11",
+        "r12",
+        "sp",
+        "lr",
+        "pc",
+        "xPSR",
+        "CPSR",
+        //"SPSR", (not implemented by hoedur)
+        "memory_address",
+        "memory_value",
+    ];
+}
+
+lazy_static! {
+    pub static ref REGISTERS_X86: Vec<&'static str> = vec![
+        "rax",
+        "rbx",
+        "rcx",
+        "rdx",
+        "rsi",
+        "rdi",
+        "rbp",
+        "rsp",
+        "r8",
+        "r9",
+        "r10",
+        "r11",
+        "r12",
+        "r13",
+        "r14",
+        "r15",
+        "seg_cs",
+        "seg_ss",
+        "seg_ds",
+        "seg_es",
+        "seg_fs",
+        "seg_gs",
+        "eflags",
+        "memory_address",
+        "memory_value",
+    ];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Register64 {
     Rax,
@@ -49,6 +107,15 @@ pub enum Register64 {
     R13,
     R14,
     R15,
+    SegCs,
+    SegSs,
+    SegDs,
+    SegEs,
+    SegFs,
+    SegGs,
+    Eflags,
+    MemoryAddress,
+    MemoryValue,
 }
 
 impl ArchRegister for Register64 {
@@ -80,6 +147,7 @@ impl RegisterValue<u64> for Register64 {
             Self::R13 => registers.r13,
             Self::R14 => registers.r14,
             Self::R15 => registers.r15,
+            _ => 0,
         }
     }
 }
@@ -113,6 +181,7 @@ impl fmt::Display for Register64 {
                 Self::R13 => "r13",
                 Self::R14 => "r14",
                 Self::R15 => "r15",
+                _ => "",
             }
         )
     }
@@ -592,6 +661,7 @@ impl FromStr for Register8High {
     }
 }
 
+#[derive(Debug)]
 pub struct user_regs_struct_arm {
     pub r0: u32,
     pub r1: u32,
@@ -611,8 +681,41 @@ pub struct user_regs_struct_arm {
     pub pc: u32,   // Program counter
     pub xpsr: u32, // Special-purpose program status registers (Cortex-M)
     pub cpsr: u32, // current program status register
-    pub spsr: u32, // saved program status register
+                   // pub spsr: u32, // saved program status register ( not implemented by hoedur)
 }
+
+impl TryFrom<Vec<u32>> for user_regs_struct_arm {
+    type Error = &'static str;
+
+    fn try_from(v: Vec<u32>) -> Result<Self, Self::Error> {
+        if v.len() < 18 {
+            return Err("The input vector does not have enough elements to populate the struct");
+        }
+
+        Ok(user_regs_struct_arm {
+            r0: v[0],
+            r1: v[1],
+            r2: v[2],
+            r3: v[3],
+            r4: v[4],
+            r5: v[5],
+            r6: v[6],
+            r7: v[7],
+            r8: v[8],
+            r9: v[9],
+            r10: v[10],
+            r11: v[11],
+            r12: v[12],
+            sp: v[13],
+            lr: v[14],
+            pc: v[15],
+            xpsr: v[16],
+            cpsr: v[17],
+            //spsr: v[18],
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterArm {
     // General-purpose registers
@@ -642,6 +745,9 @@ pub enum RegisterArm {
 
     // Saved Program Status Registers
     SPSR,
+
+    MemoryAddress,
+    MemoryValue,
 }
 
 impl RegisterArm {
@@ -662,9 +768,11 @@ impl RegisterArm {
             ARM_REG_R12 => Some(RegisterArm::R12),
             ARM_REG_SP => Some(RegisterArm::SP),
             ARM_REG_LR => Some(RegisterArm::LR),
+            ARM_REG_PC => Some(RegisterArm::PC),
             ARM_REG_SPSR => Some(RegisterArm::SPSR),
             _ => {
                 println!("Registerarm: unhandled regid: {:?}", id);
+                unimplemented!();
                 None
             }
         }
@@ -702,6 +810,7 @@ impl fmt::Display for RegisterArm {
                 Self::xPSR => "xPSR",
                 Self::CPSR => "CPSR",
                 Self::SPSR => "SPSR",
+                _ => "",
             }
         )
     }
@@ -742,6 +851,7 @@ impl RegisterValue<u32> for RegisterArm {
             .as_any()
             .downcast_ref::<user_regs_struct_arm>()
             .unwrap();
+
         match self {
             Self::R0 => registers.r0,
             Self::R1 => registers.r1,
@@ -761,7 +871,8 @@ impl RegisterValue<u32> for RegisterArm {
             Self::PC => registers.pc,
             Self::xPSR => registers.xpsr,
             Self::CPSR => registers.cpsr,
-            Self::SPSR => registers.spsr,
+            // Self::SPSR => registers.spsr,
+            _ => 0,
         }
     }
 }

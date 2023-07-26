@@ -7,6 +7,7 @@
 // Copyright (c) 2015 The libcpu Developers
 
 //! Processor state stored in the RFLAGS register.
+use crate::CpuFlags;
 use bitflags::bitflags;
 
 bitflags! {
@@ -64,4 +65,5 @@ bitflags! {
         /// most-significant bit of the result.
         const CARRY_FLAG = 1;
     }
+
 }

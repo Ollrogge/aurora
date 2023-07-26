@@ -1,43 +1,63 @@
+use crate::config::CpuArchitecture;
 use crate::predicates::*;
-use crate::trace::{Selector, REGISTERS};
+use crate::register::{Register64 as RegisterX86, RegisterArm, REGISTERS_ARM, REGISTERS_X86};
+use crate::trace::Selector;
 use crate::trace_analyzer::TraceAnalyzer;
 use rayon::prelude::*;
 
-pub struct PredicateSynthesizer {}
+pub struct PredicateSynthesizer {
+    arch: CpuArchitecture,
+}
 
-pub fn gen_reg_val_name(reg_index: Option<usize>, pred_name: String, value: u64) -> String {
+pub fn gen_reg_val_name(
+    arch: CpuArchitecture,
+    reg_index: Option<usize>,
+    pred_name: String,
+    value: u64,
+) -> String {
     match reg_index.is_some() {
-        true => format!(
-            "{} {} 0x{:x}",
-            REGISTERS[reg_index.unwrap()],
-            pred_name,
-            value
-        ),
+        true => {
+            if arch == CpuArchitecture::ARM {
+                return format!(
+                    "{} {} 0x{:x}",
+                    REGISTERS_ARM[reg_index.unwrap()],
+                    pred_name,
+                    value
+                );
+            } else {
+                return format!(
+                    "{} {} 0x{:x}",
+                    REGISTERS_X86[reg_index.unwrap()],
+                    pred_name,
+                    value
+                );
+            };
+        }
         false => format!("{} {}", pred_name, value),
     }
 }
 
 impl PredicateSynthesizer {
+    pub fn new(arch: CpuArchitecture) -> PredicateSynthesizer {
+        PredicateSynthesizer { arch }
+    }
     pub fn constant_predicates_at_address(
+        &self,
         address: usize,
         trace_analyzer: &TraceAnalyzer,
     ) -> Vec<Predicate> {
         let mut predicates = vec![];
 
-        predicates.extend(
-            PredicateSynthesizer::register_constant_predicates_at_address(
-                address,
-                trace_analyzer,
-                &Selector::RegMax,
-            ),
-        );
-        predicates.extend(
-            PredicateSynthesizer::register_constant_predicates_at_address(
-                address,
-                trace_analyzer,
-                &Selector::RegMin,
-            ),
-        );
+        predicates.extend(self.register_constant_predicates_at_address(
+            address,
+            trace_analyzer,
+            &Selector::RegMax,
+        ));
+        predicates.extend(self.register_constant_predicates_at_address(
+            address,
+            trace_analyzer,
+            &Selector::RegMin,
+        ));
 
         predicates
     }
@@ -46,21 +66,38 @@ impl PredicateSynthesizer {
     // and get min / max value depending on selector, then synthesize constants
     // for this instruction and reg. e.g. r < c to find outliers later
     fn register_constant_predicates_at_address(
+        &self,
         address: usize,
         trace_analyzer: &TraceAnalyzer,
         selector: &Selector,
     ) -> Vec<Predicate> {
-        (0..REGISTERS.len())
+        let regs = match self.arch {
+            CpuArchitecture::ARM => &*REGISTERS_ARM,
+            CpuArchitecture::X86_64 => &*REGISTERS_X86,
+        };
+        (0..regs.len())
             .into_par_iter()
             .filter(|reg_index| {
                 trace_analyzer.any_instruction_at_address_contains_reg(address, *reg_index)
             })
-            /* skip RSP */
-            .filter(|reg_index| *reg_index != 7)
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => *reg_index != RegisterArm::SP as usize,
+                CpuArchitecture::X86_64 => *reg_index != RegisterX86::Rsp as usize,
+            })
             /* skip EFLAGS */
-            .filter(|reg_index| *reg_index != 22)
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => {
+                    *reg_index != RegisterArm::xPSR as usize
+                        && *reg_index != RegisterArm::CPSR as usize
+                        && *reg_index != RegisterArm::SPSR as usize
+                }
+                CpuArchitecture::X86_64 => *reg_index != (RegisterX86::Eflags as usize - 1),
+            })
             /* skip memory address */
-            .filter(|reg_index| *reg_index != 23)
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
+                CpuArchitecture::X86_64 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
+            })
             /* skip all heap addresses */
             .filter(|reg_index| {
                 !trace_analyzer
@@ -82,7 +119,7 @@ impl PredicateSynthesizer {
                     })
             })
             .flat_map(|reg_index| {
-                PredicateSynthesizer::synthesize_constant_predicates(
+                self.synthesize_constant_predicates(
                     address,
                     trace_analyzer,
                     selector,
@@ -93,6 +130,7 @@ impl PredicateSynthesizer {
     }
 
     fn synthesize_constant_predicates(
+        &self,
         address: usize,
         trace_analyzer: &TraceAnalyzer,
         selector: &Selector,
@@ -121,7 +159,7 @@ impl PredicateSynthesizer {
 
         f.sort_by(|(_, f1), (_, f2)| f1.partial_cmp(&f2).unwrap());
 
-        PredicateSynthesizer::build_constant_predicates(
+        self.build_constant_predicates(
             address,
             selector,
             reg_index,
@@ -138,15 +176,21 @@ impl PredicateSynthesizer {
     }
 
     fn build_constant_predicates(
+        &self,
         address: usize,
         selector: &Selector,
         reg_index: Option<usize>,
         v1: u64,
         v2: u64,
     ) -> Vec<Predicate> {
-        let pred_name1 =
-            gen_reg_val_name(reg_index, selector_val_greater_or_equal_name(selector), v1);
-        let pred_name2 = gen_reg_val_name(reg_index, selector_val_less_name(selector), v2);
+        let pred_name1 = gen_reg_val_name(
+            self.arch,
+            reg_index,
+            selector_val_greater_or_equal_name(selector),
+            v1,
+        );
+        let pred_name2 =
+            gen_reg_val_name(self.arch, reg_index, selector_val_less_name(selector), v2);
 
         vec![
             Predicate::new(
