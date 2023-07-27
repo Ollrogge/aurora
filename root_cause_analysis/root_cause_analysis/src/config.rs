@@ -3,6 +3,7 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
+use trace_analysis::config::CpuArchitecture;
 
 fn parse_hex(src: &str) -> Result<usize, ParseIntError> {
     usize::from_str_radix(&src.replace("0x", ""), 16)
@@ -63,6 +64,13 @@ pub struct Config {
     )]
     pub monitor_timeout: u64,
     #[structopt(
+        long = "cpu_architecture",
+        default_value = "arm",
+        case_insensitive = true,
+        help = "Trace format of file"
+    )]
+    pub cpu_architecture: CpuArchitecture,
+    #[structopt(
         long = "blacklist-crashes",
         default_value = "",
         help = "Path for crash blacklist"
@@ -72,7 +80,8 @@ pub struct Config {
     pub debug_trace: bool,
     #[structopt(
         long = "load-offset",
-        default_value = "0x0000555555554000",
+        //default_value = "0x0000555555554000",
+        default_value = "0x0",
         parse(try_from_str = parse_hex),
         help = "Load offset of the target"
     )]

@@ -9,6 +9,8 @@ use root_cause_analysis::config::Config;
 use root_cause_analysis::monitor::executable;
 use root_cause_analysis::utils::{parse_hex, write_file};
 
+use trace_analysis::config::CpuArchitecture;
+
 fn addr2line_args(config: &Config, address: usize) -> Vec<String> {
     format!(
         "-e {} -a 0x{:x} -f -C -s -i -p",
@@ -23,8 +25,13 @@ fn addr2line_args(config: &Config, address: usize) -> Vec<String> {
 fn addr2line(config: &Config, address: usize) -> String {
     let args = addr2line_args(config, address);
 
+    let command = match config.cpu_architecture {
+        CpuArchitecture::X86_64 => "addr2line",
+        CpuArchitecture::ARM => "arm-none-eabi-addr2line",
+    };
+
     // TODO: arm-none-eabi-addr2line -e ./tests_usbus_hid.elf -a 0x576
-    let output = Command::new("addr2line")
+    let output = Command::new(command)
         .args(args)
         .output()
         .expect("Could not execute addr2line");
@@ -88,4 +95,5 @@ fn main() {
     let output: String = merge(&output_vec, &address_src_map);
 
     write_file(&out_file_path(&config), output);
+    println!("All done. Line info written to file");
 }

@@ -111,6 +111,13 @@ impl PredicateBuilder {
                 None,
                 None,
             ),
+            Predicate::new(
+                "min_saturation_flag_set",
+                address,
+                min_saturation_flag_set,
+                None,
+                None,
+            ),
             // max
             Predicate::new(
                 "max_carry_flag_set",
@@ -154,6 +161,13 @@ impl PredicateBuilder {
                 "max_overflow_flag_set",
                 address,
                 max_overflow_flag_set,
+                None,
+                None,
+            ),
+            Predicate::new(
+                "max_saturation_flag_set",
+                address,
+                max_saturation_flag_set,
                 None,
                 None,
             ),

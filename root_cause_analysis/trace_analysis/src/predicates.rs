@@ -309,6 +309,17 @@ pub fn min_overflow_flag_set(
     }
 }
 
+pub fn min_saturation_flag_set(
+    instruction: &Instruction,
+    _: Option<usize>,
+    _: Option<usize>,
+) -> bool {
+    match instruction.arch {
+        CpuArchitecture::X86_64 => false,
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMin, 27),
+    }
+}
+
 pub fn max_carry_flag_set(instruction: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
     match instruction.arch {
         CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 0),
@@ -382,6 +393,17 @@ pub fn max_overflow_flag_set(
     match instruction.arch {
         CpuArchitecture::X86_64 => is_flag_bit_set(instruction, Selector::RegMax, 11),
         CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMax, 28),
+    }
+}
+
+pub fn max_saturation_flag_set(
+    instruction: &Instruction,
+    _: Option<usize>,
+    _: Option<usize>,
+) -> bool {
+    match instruction.arch {
+        CpuArchitecture::X86_64 => false,
+        CpuArchitecture::ARM => is_flag_bit_set(instruction, Selector::RegMax, 27),
     }
 }
 
