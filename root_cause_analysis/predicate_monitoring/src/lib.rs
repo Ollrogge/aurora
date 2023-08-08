@@ -78,7 +78,7 @@ impl RootCauseCandidate {
         let old_rip = prev.pc;
         let new_rip = cur.pc;
 
-        println!("Regs: cpsr:{:x} xpsr: {:x}", prev.cpsr, prev.xpsr);
+        //println!("Regs: cpsr:{:x} xpsr: {:x}", prev.cpsr, prev.xpsr);
         let xpsr_flags = XPSR_Flags::from_bits_truncate(cur.xpsr);
         match &self.predicate {
             // todo: explain the cases with comments

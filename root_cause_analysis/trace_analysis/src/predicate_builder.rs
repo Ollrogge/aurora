@@ -265,6 +265,15 @@ impl PredicateBuilder {
                     CpuArchitecture::ARM => *reg_index != (RegisterArm::SP as usize),
                 }
             })
+            // skip ARM trace pc member
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => *reg_index != RegisterArm::PC as usize,
+                CpuArchitecture::X86_64 => true,
+            })
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => *reg_index != RegisterArm::LR as usize,
+                CpuArchitecture::X86_64 => true,
+            })
             .filter(|reg_index| {
                 match self.arch {
                     /* skip EFLAGS */
@@ -369,6 +378,7 @@ impl PredicateBuilder {
 
         if !skip_register_predicates {
             let ps = PredicateSynthesizer::new(self.arch);
+
             ret.extend(ps.constant_predicates_at_address(address, trace_analyzer));
 
             ret.extend(self.gen_register_predicates(address, &trace_analyzer));
@@ -384,6 +394,7 @@ impl PredicateBuilder {
     }
 
     fn skip_register_mnemonic(mnemonic: String) -> bool {
+        println!("mmenonic: {}", mnemonic);
         match mnemonic.as_str() {
             // leave instruction
             _ if mnemonic.contains("leave") => true,

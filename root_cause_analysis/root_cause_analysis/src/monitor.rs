@@ -36,7 +36,7 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
     #[cfg(feature = "arm")]
     {
         // todo: different way than depending on the fact that the binary is in the parent dir
-        let pattern = format!("{}/../*_trace.bin", config.eval_dir);
+        let pattern = format!("{}/*_trace.bin", config.eval_dir);
         let binary_path = glob_paths(pattern)
             .pop()
             .expect("No binary found for monitoring");
@@ -98,8 +98,9 @@ pub fn monitor_arm(
     let cs = Capstone::new()
         .arm()
         .mode(arm::ArchMode::Thumb)
+        .extra_mode([arch::arm::ArchExtraMode::MClass].iter().copied())
         .detail(true)
-        .endian(capstone::Endian::Little)
+        //.endian(capstone::Endian::Little)
         .build()
         .expect("failed to init capstone");
 

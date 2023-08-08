@@ -36,7 +36,7 @@ fn addr2line(config: &Config, address: usize) -> String {
         .output()
         .expect("Could not execute addr2line");
 
-    String::from_utf8_lossy(&output.stdout)[19..]
+    String::from_utf8_lossy(&output.stdout)[..]
         .trim()
         .to_string()
 }

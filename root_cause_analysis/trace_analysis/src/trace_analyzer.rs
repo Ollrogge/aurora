@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::{read_to_string, File};
 use std::io::Write;
+use std::ops::Range;
 use std::process::exit;
 
 pub struct TraceAnalyzer {
@@ -24,12 +25,7 @@ pub struct TraceAnalyzer {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct MemoryAddresses {
-    pub heap_start: usize,
-    pub heap_end: usize,
-    pub stack_start: usize,
-    pub stack_end: usize,
-}
+pub struct MemoryAddresses(pub HashMap<String, Range<usize>>);
 
 impl MemoryAddresses {
     pub fn read_from_file(config: &Config) -> MemoryAddresses {
@@ -270,7 +266,7 @@ impl TraceAnalyzer {
             .collect()
     }
 
-    // for each register get all instructions at address
+    // for all instructions at address get min and max val of a specific register index
     pub fn values_at_address(
         &self,
         address: usize,

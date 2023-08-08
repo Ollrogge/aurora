@@ -217,7 +217,7 @@ if __name__ == "__main__":
     # Create handlers
     c_handler = logging.StreamHandler()             # pylint: disable=invalid-name
     f_handler = logging.FileHandler('tracing.log')  # pylint: disable=invalid-name
-    c_handler.setLevel(logging.INFO)
+    c_handler.setLevel(logging.DEBUG)
     f_handler.setLevel(logging.DEBUG)
 
     logger.setLevel(logging.DEBUG)

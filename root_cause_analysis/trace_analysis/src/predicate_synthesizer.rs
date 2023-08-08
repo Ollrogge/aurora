@@ -62,9 +62,13 @@ impl PredicateSynthesizer {
         predicates
     }
 
-    // for each address, filter by registers which have been written to,
+    // for each address, for each instruction at that address
+    // get all registers for those instruction expect some special ones
     // and get min / max value depending on selector, then synthesize constants
     // for this instruction and reg. e.g. r < c to find outliers later
+    // ONLY consider memory addresses outside of valid range
+
+    // considers every value outside of checked memory ranges and finds outliers
     fn register_constant_predicates_at_address(
         &self,
         address: usize,
@@ -80,9 +84,19 @@ impl PredicateSynthesizer {
             .filter(|reg_index| {
                 trace_analyzer.any_instruction_at_address_contains_reg(address, *reg_index)
             })
+            /* skip rsp */
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::SP as usize,
                 CpuArchitecture::X86_64 => *reg_index != RegisterX86::Rsp as usize,
+            })
+            // filter pc in ARM trace
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => *reg_index != RegisterArm::PC as usize,
+                CpuArchitecture::X86_64 => true,
+            })
+            .filter(|reg_index| match self.arch {
+                CpuArchitecture::ARM => *reg_index != RegisterArm::LR as usize,
+                CpuArchitecture::X86_64 => true,
             })
             /* skip EFLAGS */
             .filter(|reg_index| match self.arch {
@@ -98,24 +112,18 @@ impl PredicateSynthesizer {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
                 CpuArchitecture::X86_64 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
             })
-            /* skip all heap addresses */
+            /* skip all valid memory regions */
+            /* todo: more fine grained control. e.g. read-only mem can be read */
             .filter(|reg_index| {
                 !trace_analyzer
                     .values_at_address(address, selector, Some(*reg_index))
                     .into_iter()
                     .all(|v: u64| {
-                        trace_analyzer.memory_addresses.heap_start <= v as usize
-                            && v as usize <= trace_analyzer.memory_addresses.heap_end
-                    })
-            })
-            /* skip all stack addresses */
-            .filter(|reg_index| {
-                !trace_analyzer
-                    .values_at_address(address, selector, Some(*reg_index))
-                    .into_iter()
-                    .all(|v: u64| {
-                        trace_analyzer.memory_addresses.stack_start <= v as usize
-                            && v as usize <= trace_analyzer.memory_addresses.stack_end
+                        trace_analyzer
+                            .memory_addresses
+                            .0
+                            .values()
+                            .all(|range| range.start <= v as usize && v as usize <= range.end)
                     })
             })
             .flat_map(|reg_index| {

@@ -9,6 +9,8 @@ use lazy_static::lazy_static;
 use nix::libc::user_regs_struct;
 use zydis::Register as ZydisRegister;
 
+use crate::config::CpuArchitecture;
+
 pub trait ArchRegister {
     fn arch_register(self) -> Register;
 }
@@ -1010,28 +1012,19 @@ impl fmt::Display for Register {
     }
 }
 
-impl FromStr for Register {
+impl FromStr for RegisterX86 {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Register64::from_str(s)
-            .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register64(reg))))
+            .and_then(|reg| Ok(RegisterX86::Register64(reg)))
+            .or_else(|_| Register32::from_str(s).and_then(|reg| Ok(RegisterX86::Register32(reg))))
+            .or_else(|_| Register16::from_str(s).and_then(|reg| Ok(RegisterX86::Register16(reg))))
             .or_else(|_| {
-                Register32::from_str(s)
-                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register32(reg))))
+                Register8Low::from_str(s).and_then(|reg| Ok(RegisterX86::Register8Low(reg)))
             })
             .or_else(|_| {
-                Register16::from_str(s)
-                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register16(reg))))
+                Register8High::from_str(s).and_then(|reg| Ok(RegisterX86::Register8High(reg)))
             })
-            .or_else(|_| {
-                Register8Low::from_str(s)
-                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register8Low(reg))))
-            })
-            .or_else(|_| {
-                Register8High::from_str(s)
-                    .and_then(|reg| Ok(Self::RegisterX86(RegisterX86::Register8High(reg))))
-            })
-            .or_else(|_| RegisterArm::from_str(s).and_then(|reg| Ok(Self::RegisterArm(reg))))
     }
 }

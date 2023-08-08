@@ -187,7 +187,9 @@ pub fn convert_predicate(
             "eflags" => return None,
 
             register => ValueDestination::Register(
-                Register::from_str(register).expect("failed to parse register"),
+                RegisterX86::from_str(register)
+                    .expect("failed to parse register")
+                    .into(),
             ),
         };
 
@@ -278,7 +280,7 @@ pub fn convert_predicate_arm(
         _ => unimplemented!(),
     };
 
-    println!("Convert predicate parts: {:?}", parts);
+    //println!("Convert predicate parts: {:?}", parts);
 
     let arch_detail = instruction.arch_detail();
 
@@ -337,7 +339,9 @@ pub fn convert_predicate_arm(
             // todo: is operand_width always 4 byte ?
             "memory_value" => ValueDestination::Memory(4, memory.expect("no memory location")),
             register => ValueDestination::Register(
-                Register::from_str(register).expect("failed to parse register"),
+                RegisterArm::from_str(register)
+                    .expect("failed to parse register")
+                    .into(),
             ),
         };
 
