@@ -474,6 +474,7 @@ pub fn rank_predicates_arm(
     detailed_trace: Vec<user_regs_struct_arm>,
     binary: &Vec<u8>,
 ) -> Result<Vec<usize>> {
+    // rccs = root cause candidates
     let rccs: HashMap<usize, RootCauseCandidate> = predicates
         .into_iter()
         .map(|pred| {
@@ -513,6 +514,7 @@ pub fn rank_predicates_arm(
         .map(|pred| (pred.address, pred))
         .collect();
 
+    // TODO: create bitmap for multi-location predicates
     let mut satisfaction = vec![];
     for window in detailed_trace.windows(2) {
         match window {
@@ -520,6 +522,8 @@ pub fn rank_predicates_arm(
                 let pc = prev.pc as usize;
                 if let Some(rcc) = rccs.get(&pc) {
                     let satisfied = rcc.satisfied_arm(&prev, &cur).context("satisfied arm")?;
+
+                    assert!(pc == rcc.address);
 
                     if satisfied {
                         satisfaction.push((rcc.address, rcc.predicate.clone()));

@@ -52,7 +52,7 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
             .into_par_iter()
             .enumerate()
             .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
-            .map(|(index, path)| monitor_arm(path, &binary, &predicates))
+            .map(|(_, path)| monitor_arm(path, &binary, &predicates))
             .filter(|r| match r {
                 Ok(val) => !val.is_empty(),
                 Err(_) => true,
@@ -82,6 +82,8 @@ pub fn monitor_arm(
     predicates: &Vec<SerializedPredicate>,
 ) -> Result<Vec<usize>> {
     let f = File::open(input_path).context("open monitor file")?;
+
+    // all register values throughout the whole exeuction of the program
     let detailed_trace: Vec<Vec<u32>> =
         bincode::deserialize_from(f).context("bincode deserialize")?;
 

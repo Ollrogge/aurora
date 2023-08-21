@@ -365,14 +365,17 @@ pub fn convert_predicate_arm(
             value,
         })));
     } else if function.contains("ins_count") {
+        log::info!("ins_count unhandled ? {}", function);
         // "ins_count_less"
         // "ins_count_greater_or_equal"
     } else if function.contains("selector_val") {
+        log::info!("selector val unhandled ? {}", function);
         // "selector_val_less_name"
         // "selector_val_less"
         // "selector_val_greater_or_equal_name"
         // "selector_val_greater_or_equal"
     } else if function.contains("num_successors") {
+        log::info!("num_succcessors unhandled ? {}", function);
         // "num_successors_greater" =>
         // "num_successors_equal" =>
     } else if function.contains("flag") {

@@ -240,11 +240,61 @@ impl PredicateSynthesizer {
             Some(val as usize),
         );
 
-        PredicateSynthesizer::evaluate_predicate_with_reachability(
+        PredicateSynthesizer::evaluate_predicate_with_reachability2(
             address,
             trace_analyzer,
             &predicate,
         )
+    }
+
+    pub fn evaluate_predicate_with_reachability2(
+        address: usize,
+        trace_analyzer: &TraceAnalyzer,
+        predicate: &Predicate,
+    ) -> f64 {
+        // False Negatives: Crashes that the predicate failed to predict
+        let cf = trace_analyzer
+            .crashes
+            .as_slice()
+            .par_iter()
+            .map(|t| t.instructions.get(&predicate.address))
+            .filter(|i| !predicate.execute(i))
+            .count() as f64;
+
+        // True Positives: Crashes correctly predicted by the predicate
+        let ct = trace_analyzer
+            .crashes
+            .as_slice()
+            .par_iter()
+            .map(|t| t.instructions.get(&predicate.address))
+            .filter(|i| predicate.execute(i))
+            .count() as f64;
+
+        // False Positives: Non-crashes that the predicate mistakenly predicted as crashes
+        let nf = trace_analyzer
+            .non_crashes
+            .as_slice()
+            .par_iter()
+            .map(|t| t.instructions.get(&predicate.address))
+            .filter(|i| predicate.execute(i))
+            .count() as f64;
+
+        // True Negatives: Non-crashes correctly identified by the predicate
+        let nt = trace_analyzer
+            .non_crashes
+            .as_slice()
+            .par_iter()
+            .map(|t| t.instructions.get(&predicate.address))
+            .filter(|i| !predicate.execute(i))
+            .count() as f64;
+
+        let theta = 0.5 * (cf / (cf + nf) + nf / (nf + nt));
+        let mut score = 2.0 * (theta - 0.5).abs();
+        if score.is_nan() {
+            println!("NaN ? {}", predicate.score);
+            score = 0.0;
+        }
+        score
     }
 
     pub fn evaluate_predicate_with_reachability(

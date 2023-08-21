@@ -394,7 +394,7 @@ impl PredicateBuilder {
     }
 
     fn skip_register_mnemonic(mnemonic: String) -> bool {
-        println!("mmenonic: {}", mnemonic);
+        //println!("mmenonic: {}", mnemonic);
         match mnemonic.as_str() {
             // leave instruction
             _ if mnemonic.contains("leave") => true,
