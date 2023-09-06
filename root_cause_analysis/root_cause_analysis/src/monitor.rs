@@ -16,6 +16,20 @@ use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::register::user_regs_struct_arm;
 use trace_analysis::trace_analyzer::{blacklist_path, read_crash_blacklist};
 
+pub fn monitor_compound_predicates(config: &Config) -> Result<()> {
+    let pattern = format!("{}/*_trace.bin", config.eval_dir);
+    let binary_path = glob_paths(pattern)
+        .pop()
+        .expect("No binary found for monitoring");
+
+    let binary = fs::read(binary_path)?;
+    let predicate_file = &format!("{}/{}", config.eval_dir, "all_predicates.json".to_string());
+
+    let predicates = deserialize_predicates(predicate_file);
+
+    Ok(())
+}
+
 pub fn monitor_predicates(config: &Config) -> Result<()> {
     let blacklist_paths =
         read_crash_blacklist(config.blacklist_crashes(), &config.crash_blacklist_path);
@@ -47,7 +61,7 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
         let predicates = deserialize_predicates(predicate_file);
 
         // go through the detailed trace of every crashing input and check
-        // their fulfillment
+        // predicate fulfillment
         rankings = glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
             .into_par_iter()
             .enumerate()

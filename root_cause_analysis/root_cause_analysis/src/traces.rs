@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::rankings::trunc_score;
 use crate::utils::{read_file, write_file};
 use std::collections::HashMap;
 use trace_analysis::predicates::SerializedPredicate;
@@ -23,14 +24,21 @@ pub fn analyze_traces(config: &Config) {
 
     let predicates = trace_analyzer.get_predicates_better_than(0.9);
 
-    serialize_mnemonics(config, &predicates, &trace_analyzer);
+    serialize_mnemonics(config, "mnemonics.json", &predicates, &trace_analyzer);
+    serialize_predicates(config, "predicates.json", &predicates);
 
-    serialize_predicates(config, &predicates);
+    let predicates = trace_analyzer.get_predicates();
+    serialize_mnemonics(config, "all_mnemonics.json", &predicates, &trace_analyzer);
+    serialize_predicates(config, "all_predicates.json", &predicates);
 }
 
-fn serialize_predicates(config: &Config, predicates: &Vec<SerializedPredicate>) {
+fn serialize_predicates(
+    config: &Config,
+    filename: &'static str,
+    predicates: &Vec<SerializedPredicate>,
+) {
     let content = serde_json::to_string(predicates).expect("Could not serialize predicates");
-    write_file(&format!("{}/predicates.json", config.eval_dir), content);
+    write_file(&format!("{}/{}", config.eval_dir, filename), content);
 }
 
 pub fn deserialize_predicates(config: &Config) -> Vec<SerializedPredicate> {
@@ -42,6 +50,7 @@ pub fn deserialize_predicates(config: &Config) -> Vec<SerializedPredicate> {
 
 fn serialize_mnemonics(
     config: &Config,
+    filename: &'static str,
     predicates: &Vec<SerializedPredicate>,
     trace_analyzer: &TraceAnalyzer,
 ) {
@@ -50,7 +59,7 @@ fn serialize_mnemonics(
         .map(|p| (p.address, trace_analyzer.get_any_mnemonic(p.address)))
         .collect();
     let content = serde_json::to_string(&map).expect("Could not serialize mnemonics");
-    write_file(&format!("{}/mnemonics.json", config.eval_dir), content);
+    write_file(&format!("{}/{}", config.eval_dir, filename), content);
 }
 
 pub fn deserialize_mnemonics(config: &Config) -> HashMap<usize, String> {

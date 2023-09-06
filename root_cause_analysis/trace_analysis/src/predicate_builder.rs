@@ -40,6 +40,21 @@ impl PredicateBuilder {
             .collect()
     }
 
+    fn gen_all_conditional_edge_from_to_predicates(
+        address: usize,
+        cfg: &ControlFlowGraph,
+        pred_name: &str,
+        func: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
+    ) -> Vec<Predicate> {
+        cfg.get_instruction_successors(address)
+            .iter()
+            .map(|to| {
+                let pred_name = format!("0x{:x} {} 0x{:x}", address, pred_name, to);
+                Predicate::new(&pred_name, address, func, Some(*to), None)
+            })
+            .collect()
+    }
+
     fn gen_all_edge_val_predicates(
         address: usize,
         pred_name: &str,
@@ -60,6 +75,13 @@ impl PredicateBuilder {
             CpuArchitecture::ARM => RegisterArm::xPSR as usize,
             CpuArchitecture::X86_64 => RegisterX86::Eflags as usize,
         };
+
+        if address == 2101202 {
+            println!(
+                "TRUE BABY ? {:?}",
+                trace_analyzer.any_instruction_at_address_contains_reg(address, flags_reg_idx)
+            );
+        }
         if !trace_analyzer.any_instruction_at_address_contains_reg(address, flags_reg_idx) {
             return vec![];
         }
@@ -290,6 +312,19 @@ impl PredicateBuilder {
                 CpuArchitecture::X86_64 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
                 CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
             })
+            // ram addresses in registers are too noisy
+            .filter(|reg_index| {
+                !trace_analyzer
+                    .values_at_address(address, selector, Some(*reg_index))
+                    .into_iter()
+                    .all(|v: u64| {
+                        trace_analyzer
+                            .memory_addresses
+                            .0
+                            .values()
+                            .all(|range| range.start <= v as usize && v as usize <= range.end)
+                    })
+            })
             .map(|reg_index| {
                 let pred_name = gen_reg_val_name(
                     self.arch,
@@ -315,12 +350,14 @@ impl PredicateBuilder {
     ) -> Vec<Predicate> {
         let mut ret = vec![];
 
-        ret.extend(self.gen_all_reg_val_predicates(
-            address,
-            trace_analyzer,
-            &Selector::RegMax,
-            0xffffffffffffffff,
-        ));
+        if self.arch != CpuArchitecture::ARM {
+            ret.extend(self.gen_all_reg_val_predicates(
+                address,
+                trace_analyzer,
+                &Selector::RegMax,
+                0xffffffffffffffff,
+            ));
+        }
         ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,
@@ -340,12 +377,14 @@ impl PredicateBuilder {
             0xff,
         ));
 
-        ret.extend(self.gen_all_reg_val_predicates(
-            address,
-            trace_analyzer,
-            &Selector::RegMin,
-            0xffffffffffffffff,
-        ));
+        if self.arch != CpuArchitecture::ARM {
+            ret.extend(self.gen_all_reg_val_predicates(
+                address,
+                trace_analyzer,
+                &Selector::RegMin,
+                0xffffffffffffffff,
+            ));
+        }
         ret.extend(self.gen_all_reg_val_predicates(
             address,
             trace_analyzer,

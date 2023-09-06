@@ -8,25 +8,32 @@ use rayon::prelude::*;
 pub struct PredicateAnalyzer {}
 
 impl PredicateAnalyzer {
-    pub fn evaluate_best_predicate_at_address(
+    pub fn evaluate_best_predicates_at_address(
         address: usize,
         trace_analyzer: &TraceAnalyzer,
         arch: CpuArchitecture,
-    ) -> Predicate {
+    ) -> Vec<Predicate> {
         let pb = PredicateBuilder::new(arch);
         let predicates = pb.gen_predicates(address, trace_analyzer);
 
         if predicates.is_empty() {
-            return Predicate::gen_empty(address);
+            return vec![Predicate::gen_empty(address)];
         }
 
         let mut ret: Vec<Predicate> = predicates
             .into_par_iter()
-            .map(|p| PredicateAnalyzer::evaluate_predicate2(trace_analyzer, p))
+            .map(|p| PredicateAnalyzer::evaluate_predicate(trace_analyzer, p))
             .collect();
 
         ret.sort_by(|p1, p2| p1.score.partial_cmp(&p2.score).unwrap());
-        ret.pop().unwrap()
+        let highest_score = ret.last().unwrap().score;
+
+        /*
+        We're using (item.score - highest_score).abs() < std::f64::EPSILON to compare floating point numbers for equality because directly comparing them might lead to inaccuracies due to floating point precision issues.
+         */
+        ret.into_iter()
+            .filter(|p| (p.score - highest_score).abs() < std::f64::EPSILON)
+            .collect()
     }
 
     fn evaluate_predicate2(trace_analyzer: &TraceAnalyzer, mut predicate: Predicate) -> Predicate {
@@ -35,6 +42,7 @@ impl PredicateAnalyzer {
             .crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&predicate.address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| !predicate.execute(i))
             .count() as f64;
@@ -44,6 +52,7 @@ impl PredicateAnalyzer {
             .crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&predicate.address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| predicate.execute(i))
             .count() as f64;
@@ -53,6 +62,7 @@ impl PredicateAnalyzer {
             .non_crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&predicate.address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| predicate.execute(i))
             .count() as f64;
@@ -62,14 +72,15 @@ impl PredicateAnalyzer {
             .non_crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&predicate.address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| !predicate.execute(i))
             .count() as f64;
 
-        let theta = 0.5 * (cf / (cf + nf) + nf / (nf + nt));
+        let theta = 0.5 * (cf / (cf + ct) + nf / (nf + nt));
         predicate.score = 2.0 * (theta - 0.5).abs();
         if predicate.score.is_nan() {
-            println!("NaN ? {}", predicate.score);
+            println!("NaN ? {} {} {} {} {}", predicate.score, cf, nt, nf, ct);
             predicate.score = 0.0;
         }
         //println!("Score: {}", predicate.score);
@@ -85,6 +96,7 @@ impl PredicateAnalyzer {
             .filter(|i| predicate.execute(i))
             .count() as f64
             / trace_analyzer.crashes.len() as f64;
+
         let true_negatives = trace_analyzer
             .non_crashes
             .as_slice()

@@ -19,7 +19,7 @@ use std::process::exit;
 pub struct TraceAnalyzer {
     pub crashes: TraceVec,
     pub non_crashes: TraceVec,
-    pub address_scores: HashMap<usize, Predicate>,
+    pub address_scores: Vec<(usize, Predicate)>,
     pub cfg: ControlFlowGraph,
     pub memory_addresses: MemoryAddresses,
 }
@@ -162,7 +162,7 @@ impl TraceAnalyzer {
         let mut trace_analyzer = TraceAnalyzer {
             crashes,
             non_crashes,
-            address_scores: HashMap::new(),
+            address_scores: Vec::new(),
             cfg: ControlFlowGraph::new(),
             memory_addresses: MemoryAddresses::read_from_file(config),
         };
@@ -206,11 +206,11 @@ impl TraceAnalyzer {
         let addresses = self.crash_non_crash_intersection();
         self.address_scores = addresses
             .into_par_iter()
-            .map(|address| {
-                (
-                    address,
-                    PredicateAnalyzer::evaluate_best_predicate_at_address(address, self, arch),
-                )
+            .flat_map(|address| {
+                PredicateAnalyzer::evaluate_best_predicates_at_address(address, self, arch)
+                    .into_iter()
+                    .map(|p| (address, p))
+                    .collect::<Vec<(usize, Predicate)>>()
             })
             .collect();
     }
@@ -363,9 +363,16 @@ impl TraceAnalyzer {
 
     pub fn get_predicates_better_than(&self, min_score: f64) -> Vec<SerializedPredicate> {
         self.address_scores
-            .values()
-            .filter(|p| p.score > min_score)
-            .map(|p| p.to_serialzed())
+            .iter()
+            .filter(|(_, p)| p.score > min_score)
+            .map(|(_, p)| p.to_serialzed())
+            .collect()
+    }
+
+    pub fn get_predicates(&self) -> Vec<SerializedPredicate> {
+        self.address_scores
+            .iter()
+            .map(|(_, p)| p.to_serialzed())
             .collect()
     }
 

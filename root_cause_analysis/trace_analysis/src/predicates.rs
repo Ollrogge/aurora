@@ -420,10 +420,11 @@ pub fn num_successors_equal(instruction: &Instruction, n: Option<usize>, _: Opti
 }
 
 pub fn has_edge_to(instruction: &Instruction, address: Option<usize>, _: Option<usize>) -> bool {
+    // an unconditional branch is kinda useless and misleading
     instruction
         .successors
         .iter()
-        .any(|s| s.address == address.unwrap())
+        .any(|s| s.address == address.unwrap() && s.is_conditional())
 }
 
 pub fn edge_only_taken_to(

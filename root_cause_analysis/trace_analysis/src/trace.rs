@@ -209,16 +209,33 @@ impl SerializedInstruction {
     }
 }
 
+#[derive(Serialize, Debug, PartialEq, Clone, Deserialize, Copy)]
+pub enum EdgeType {
+    Direct,
+    Indirect,
+    Conditional,
+    Syscall,
+    Return,
+    Regular,
+    Unknown,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SerializedEdge {
     from: usize,
     to: usize,
     count: usize,
+    typ: EdgeType,
 }
 
 impl SerializedEdge {
-    pub fn new(from: usize, to: usize, count: usize) -> SerializedEdge {
-        SerializedEdge { from, to, count }
+    pub fn new(from: usize, to: usize, count: usize, typ: EdgeType) -> SerializedEdge {
+        SerializedEdge {
+            from,
+            to,
+            count,
+            typ,
+        }
     }
 }
 
@@ -240,7 +257,10 @@ impl SerializedTrace {
             .collect();
         for edge in &serialized.edges {
             if let Some(entry) = instructions.get_mut(&edge.from) {
-                entry.successors.push(Successor { address: edge.to });
+                entry.successors.push(Successor {
+                    address: edge.to,
+                    typ: edge.typ,
+                });
             }
         }
         for v in instructions.values_mut() {
@@ -260,11 +280,16 @@ impl SerializedTrace {
 #[derive(Clone, Serialize, Deserialize, Copy)]
 pub struct Successor {
     pub address: usize,
+    pub typ: EdgeType,
 }
 
 impl Successor {
     pub fn to_string(&self) -> String {
         format!("{:#018x}", self.address)
+    }
+
+    pub fn is_conditional(&self) -> bool {
+        self.typ == EdgeType::Conditional
     }
 }
 

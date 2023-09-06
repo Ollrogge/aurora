@@ -240,7 +240,7 @@ impl PredicateSynthesizer {
             Some(val as usize),
         );
 
-        PredicateSynthesizer::evaluate_predicate_with_reachability2(
+        PredicateSynthesizer::evaluate_predicate_with_reachability(
             address,
             trace_analyzer,
             &predicate,
@@ -257,6 +257,7 @@ impl PredicateSynthesizer {
             .crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| !predicate.execute(i))
             .count() as f64;
@@ -266,6 +267,7 @@ impl PredicateSynthesizer {
             .crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| predicate.execute(i))
             .count() as f64;
@@ -275,6 +277,7 @@ impl PredicateSynthesizer {
             .non_crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| predicate.execute(i))
             .count() as f64;
@@ -284,11 +287,12 @@ impl PredicateSynthesizer {
             .non_crashes
             .as_slice()
             .par_iter()
+            .filter(|t| t.instructions.get(&address).is_some())
             .map(|t| t.instructions.get(&predicate.address))
             .filter(|i| !predicate.execute(i))
             .count() as f64;
 
-        let theta = 0.5 * (cf / (cf + nf) + nf / (nf + nt));
+        let theta = 0.5 * (cf / (cf + ct) + nf / (nf + nt));
         let mut score = 2.0 * (theta - 0.5).abs();
         if score.is_nan() {
             println!("NaN ? {}", predicate.score);
