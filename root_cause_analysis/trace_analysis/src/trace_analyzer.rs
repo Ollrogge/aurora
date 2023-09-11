@@ -369,6 +369,7 @@ impl TraceAnalyzer {
             .collect()
     }
 
+    // todo: called to_serialized twice will become problematic due to id
     pub fn get_predicates(&self) -> Vec<SerializedPredicate> {
         self.address_scores
             .iter()

@@ -64,6 +64,7 @@ fn disasm(log_level: log::Level, decoder: &Decoder, pid: Pid, address: usize, le
 pub struct RootCauseCandidate {
     pub address: usize,
     pub score: f64,
+    pub pred_id: usize,
     pub predicate: Predicate,
 }
 
@@ -255,6 +256,7 @@ fn convert_predicates(
                 Some(RootCauseCandidate {
                     address,
                     score: pred.score,
+                    pred_id: 0,
                     predicate,
                 })
             });
@@ -468,6 +470,7 @@ pub fn rank_predicates(
     satisfaction.into_iter().map(|(addr, _)| addr).collect()
 }
 
+// returns addresses of satisfied predicates
 pub fn rank_predicates_arm(
     cs: Capstone,
     predicates: &Vec<SerializedPredicate>,
@@ -475,44 +478,29 @@ pub fn rank_predicates_arm(
     binary: &Vec<u8>,
 ) -> Result<Vec<usize>> {
     // rccs = root cause candidates
-    let rccs: HashMap<usize, RootCauseCandidate> = predicates
+    let rccs: HashMap<usize, Vec<RootCauseCandidate>> = predicates
         .into_iter()
-        .map(|pred| {
+        .filter_map(|pred| {
             let address = pred.address;
+            let id = pred.id;
 
-            let insts = cs
-                .disasm_count(binary, address as u64, 1)
-                .map_err(|_| anyhow!("disasm_count"))?;
+            let insts = cs.disasm_count(binary, address as u64, 1).ok()?;
+            let isn = insts.iter().next()?;
 
-            let isn = insts.iter().next().context("iter.next()")?;
+            let detail = cs.insn_detail(isn).ok()?;
+            let converted = predicate::convert_predicate_arm(&pred.name, detail).ok()??;
 
-            let detail = cs
-                .insn_detail(isn)
-                .map_err(|_| anyhow!("unable to obtain isn_detail"))?;
-
-            let converted = predicate::convert_predicate_arm(&pred.name, detail)
-                .context("convert_predicate")?
-                .and_then(|predicate| {
-                    Some(RootCauseCandidate {
-                        address,
-                        score: pred.score,
-                        predicate,
-                    })
-                });
-
-            Ok(converted)
+            Some(RootCauseCandidate {
+                address,
+                score: pred.score,
+                pred_id: id,
+                predicate: converted,
+            })
         })
-        .filter_map(
-            |pred: Result<Option<RootCauseCandidate>, anyhow::Error>| match pred {
-                Ok(pred) => pred,
-                Err(err) => {
-                    warn!("Error while trying to convert predicate: {:?}", err);
-                    None
-                }
-            },
-        )
-        .map(|pred| (pred.address, pred))
-        .collect();
+        .fold(HashMap::new(), |mut acc, rcc| {
+            acc.entry(rcc.address).or_insert_with(Vec::new).push(rcc);
+            acc
+        });
 
     // TODO: create bitmap for multi-location predicates
     let mut satisfaction = vec![];
@@ -520,13 +508,15 @@ pub fn rank_predicates_arm(
         match window {
             [prev, cur] => {
                 let pc = prev.pc as usize;
-                if let Some(rcc) = rccs.get(&pc) {
-                    let satisfied = rcc.satisfied_arm(&prev, &cur).context("satisfied arm")?;
+                if let Some(rccs) = rccs.get(&pc) {
+                    for rcc in rccs.iter() {
+                        let satisfied = rcc.satisfied_arm(&prev, &cur).context("satisfied arm")?;
 
-                    assert!(pc == rcc.address);
+                        assert!(pc == rcc.address);
 
-                    if satisfied {
-                        satisfaction.push((rcc.address, rcc.predicate.clone()));
+                        if satisfied {
+                            satisfaction.push((rcc.address, rcc.pred_id, rcc.predicate.clone()));
+                        }
                     }
                 }
             }
@@ -534,9 +524,10 @@ pub fn rank_predicates_arm(
         }
     }
 
-    info!("rccs = {:#018x?}", rccs);
-
-    Ok(satisfaction.into_iter().map(|(addr, _)| addr).collect())
+    Ok(satisfaction
+        .into_iter()
+        .map(|(address, pred_id, _)| pred_id)
+        .collect())
 }
 
 pub fn spawn_dbg(path: &Path, args: &[String]) -> Ptracer {

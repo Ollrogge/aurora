@@ -16,36 +16,22 @@ use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::register::user_regs_struct_arm;
 use trace_analysis::trace_analyzer::{blacklist_path, read_crash_blacklist};
 
-pub fn monitor_compound_predicates(config: &Config) -> Result<()> {
-    let pattern = format!("{}/*_trace.bin", config.eval_dir);
-    let binary_path = glob_paths(pattern)
-        .pop()
-        .expect("No binary found for monitoring");
-
-    let binary = fs::read(binary_path)?;
-    let predicate_file = &format!("{}/{}", config.eval_dir, "all_predicates.json".to_string());
-
-    let predicates = deserialize_predicates(predicate_file);
-
-    Ok(())
-}
-
 pub fn monitor_predicates(config: &Config) -> Result<()> {
     let blacklist_paths =
         read_crash_blacklist(config.blacklist_crashes(), &config.crash_blacklist_path);
 
-    let rankings;
     #[cfg(not(feature = "arm"))]
     {
         let cmd_line = cmd_line(&config);
 
-        rankings = glob_paths(format!("{}/inputs/crashes/*", config.eval_dir))
+        let rankings = glob_paths(format!("{}/inputs/crashes/*", config.eval_dir))
             .into_par_iter()
             .enumerate()
             .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
             .map(|(index, i)| monitor(config, index, &replace_input(&cmd_line, &i)))
             .filter(|r| !r.is_empty())
             .collect();
+        serialize_rankings(config, &rankings);
     }
     #[cfg(feature = "arm")]
     {
@@ -56,27 +42,52 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
             .expect("No binary found for monitoring");
 
         let binary = fs::read(binary_path)?;
-        let predicate_file = &format!("{}/{}", config.eval_dir, predicate_file_name());
 
-        let predicates = deserialize_predicates(predicate_file);
+        if config.compound_predicates {
+            let rankings = monitor_predicates_arm_compound(config, &binary)?;
+        }
 
-        // go through the detailed trace of every crashing input and check
-        // predicate fulfillment
-        rankings = glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
-            .into_par_iter()
-            .enumerate()
-            .filter(|(_, p)| !blacklist_path(&p, &blacklist_paths))
-            .map(|(_, path)| monitor_arm(path, &binary, &predicates))
-            .filter(|r| match r {
-                Ok(val) => !val.is_empty(),
-                Err(_) => true,
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let rankings = monitor_predicates_arm(config, &binary)?;
+        serialize_rankings(config, &rankings);
     }
 
-    serialize_rankings(config, &rankings);
-
     Ok(())
+}
+
+fn monitor_predicates_arm(config: &Config, binary: &Vec<u8>) -> Result<Vec<Vec<usize>>> {
+    let predicate_file = &format!("{}/{}", config.eval_dir, predicate_file_name());
+
+    let predicates = deserialize_predicates(predicate_file);
+
+    // go through the detailed trace of every crashing input and check
+    // predicate fulfillment, returns a ranking vector for each binary
+    glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
+        .into_par_iter()
+        .enumerate()
+        .map(|(_, path)| monitor_arm(path, &binary, &predicates))
+        .filter(|r| match r {
+            Ok(val) => !val.is_empty(),
+            Err(_) => true,
+        })
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn monitor_predicates_arm_compound(config: &Config, binary: &Vec<u8>) -> Result<Vec<Vec<usize>>> {
+    let predicate_file = &format!("{}/{}", config.eval_dir, "all_predicates.json");
+
+    let predicates = deserialize_predicates(predicate_file);
+
+    // go through the detailed trace of every crashing input and check
+    // predicate fulfillment, returns a ranking vector for each binary
+    glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
+        .into_par_iter()
+        .enumerate()
+        .map(|(_, path)| monitor_arm(path, &binary, &predicates))
+        .filter(|r| match r {
+            Ok(val) => !val.is_empty(),
+            Err(_) => true,
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn deserialize_predicates(predicate_file: &String) -> Vec<SerializedPredicate> {

@@ -1,21 +1,36 @@
 use crate::config::CpuArchitecture;
 use crate::register::{Register64 as RegisterX86, RegisterArm};
 use crate::trace::{Instruction, Register, Selector};
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedPredicate {
     pub name: String,
     pub score: f64,
     pub address: usize,
+    pub id: usize,
+}
+
+lazy_static! {
+    static ref ID: AtomicUsize = AtomicUsize::new(0);
 }
 
 impl SerializedPredicate {
     pub fn new(name: String, address: usize, score: f64) -> SerializedPredicate {
+        let to_be_hashed = format!("{}{}{}", name, address, score);
+        let mut hasher = DefaultHasher::new();
+        to_be_hashed.hash(&mut hasher);
+        let hash = hasher.finish();
+
         SerializedPredicate {
             name,
             score,
             address,
+            id: hash as usize,
         }
     }
 
@@ -57,11 +72,6 @@ impl Predicate {
             function,
             score: 0.0,
         }
-    }
-
-    pub fn serialize(&self) -> String {
-        let serialized = SerializedPredicate::new(self.name.to_string(), self.address, self.score);
-        serde_json::to_string(&serialized).unwrap()
     }
 
     pub fn to_serialzed(&self) -> SerializedPredicate {

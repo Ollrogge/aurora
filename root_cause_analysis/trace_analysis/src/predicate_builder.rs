@@ -76,12 +76,6 @@ impl PredicateBuilder {
             CpuArchitecture::X86_64 => RegisterX86::Eflags as usize,
         };
 
-        if address == 2101202 {
-            println!(
-                "TRUE BABY ? {:?}",
-                trace_analyzer.any_instruction_at_address_contains_reg(address, flags_reg_idx)
-            );
-        }
         if !trace_analyzer.any_instruction_at_address_contains_reg(address, flags_reg_idx) {
             return vec![];
         }

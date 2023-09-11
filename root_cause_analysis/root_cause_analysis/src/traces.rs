@@ -27,9 +27,12 @@ pub fn analyze_traces(config: &Config) {
     serialize_mnemonics(config, "mnemonics.json", &predicates, &trace_analyzer);
     serialize_predicates(config, "predicates.json", &predicates);
 
-    let predicates = trace_analyzer.get_predicates();
-    serialize_mnemonics(config, "all_mnemonics.json", &predicates, &trace_analyzer);
-    serialize_predicates(config, "all_predicates.json", &predicates);
+    // todo: get_predicate re-initializes serializedpredicates and fucks up ids
+    if config.compound_predicates {
+        let predicates = trace_analyzer.get_predicates();
+        serialize_mnemonics(config, "all_mnemonics.json", &predicates, &trace_analyzer);
+        serialize_predicates(config, "all_predicates.json", &predicates);
+    }
 }
 
 fn serialize_predicates(
