@@ -280,8 +280,6 @@ pub fn convert_predicate_arm(
         _ => unimplemented!(),
     };
 
-    //println!("Convert predicate parts: {:?}", parts);
-
     let arch_detail = instruction.arch_detail();
 
     let arm_isn_detail = arch_detail
@@ -397,7 +395,10 @@ pub fn convert_predicate_arm(
             "last_sign_flag_set" => return Ok(None),
             "last_overflow_flag_set" => return Ok(None),
             "last_saturation_flag_set" => return Ok(None),
-            _ => unimplemented!(),
+            _ => {
+                println!("Unknown flag: {}", function);
+                unimplemented!()
+            }
         };
 
         return Ok(Some(Predicate::FlagSet(CpuFlags::ARM(flag))));

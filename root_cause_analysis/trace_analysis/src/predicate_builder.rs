@@ -80,8 +80,110 @@ impl PredicateBuilder {
             return vec![];
         }
 
-        vec![
-            // min
+        let mut flag_predicates = Vec::new();
+
+        if self.arch == CpuArchitecture::ARM {
+            flag_predicates.extend_from_slice(&vec![
+                Predicate::new(
+                    "max_saturation_flag_set",
+                    address,
+                    max_saturation_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "min_saturation_flag_set",
+                    address,
+                    min_saturation_flag_set,
+                    None,
+                    None,
+                ),
+            ])
+        } else {
+            flag_predicates.extend_from_slice(&vec![
+                Predicate::new(
+                    "max_parity_flag_set",
+                    address,
+                    max_parity_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "min_parity_flag_set",
+                    address,
+                    min_parity_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "max_adjust_flag_set",
+                    address,
+                    max_adjust_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "min_adjust_flag_set",
+                    address,
+                    min_adjust_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new("max_trap_flag_set", address, max_trap_flag_set, None, None),
+                Predicate::new("min_trap_flag_set", address, min_trap_flag_set, None, None),
+                Predicate::new(
+                    "max_interrupt_flag_set",
+                    address,
+                    max_interrupt_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "min_interrupt_flag_set",
+                    address,
+                    min_interrupt_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "max_direction_flag_set",
+                    address,
+                    max_direction_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "min_direction_flag_set",
+                    address,
+                    min_direction_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "max_parity_flag_set",
+                    address,
+                    max_parity_flag_set,
+                    None,
+                    None,
+                ),
+                Predicate::new(
+                    "min_parity_flag_set",
+                    address,
+                    min_parity_flag_set,
+                    None,
+                    None,
+                ),
+            ])
+        }
+
+        flag_predicates.extend_from_slice(&vec![
+            Predicate::new(
+                "max_carry_flag_set",
+                address,
+                max_carry_flag_set,
+                None,
+                None,
+            ),
             Predicate::new(
                 "min_carry_flag_set",
                 address,
@@ -89,34 +191,14 @@ impl PredicateBuilder {
                 None,
                 None,
             ),
-            Predicate::new(
-                "min_parity_flag_set",
-                address,
-                min_parity_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "min_adjust_flag_set",
-                address,
-                min_adjust_flag_set,
-                None,
-                None,
-            ),
+            Predicate::new("max_zero_flag_set", address, max_zero_flag_set, None, None),
             Predicate::new("min_zero_flag_set", address, min_zero_flag_set, None, None),
+            Predicate::new("max_sign_flag_set", address, max_sign_flag_set, None, None),
             Predicate::new("min_sign_flag_set", address, min_sign_flag_set, None, None),
-            Predicate::new("min_trap_flag_set", address, min_trap_flag_set, None, None),
             Predicate::new(
-                "min_interrupt_flag_set",
+                "max_overflow_flag_set",
                 address,
-                min_interrupt_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "min_direction_flag_set",
-                address,
-                min_direction_flag_set,
+                max_overflow_flag_set,
                 None,
                 None,
             ),
@@ -127,67 +209,9 @@ impl PredicateBuilder {
                 None,
                 None,
             ),
-            Predicate::new(
-                "min_saturation_flag_set",
-                address,
-                min_saturation_flag_set,
-                None,
-                None,
-            ),
-            // max
-            Predicate::new(
-                "max_carry_flag_set",
-                address,
-                max_carry_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "max_parity_flag_set",
-                address,
-                max_parity_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "max_adjust_flag_set",
-                address,
-                max_adjust_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new("max_zero_flag_set", address, max_zero_flag_set, None, None),
-            Predicate::new("max_sign_flag_set", address, max_sign_flag_set, None, None),
-            Predicate::new("max_trap_flag_set", address, max_trap_flag_set, None, None),
-            Predicate::new(
-                "max_interrupt_flag_set",
-                address,
-                max_interrupt_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "max_direction_flag_set",
-                address,
-                max_direction_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "max_overflow_flag_set",
-                address,
-                max_overflow_flag_set,
-                None,
-                None,
-            ),
-            Predicate::new(
-                "max_saturation_flag_set",
-                address,
-                max_saturation_flag_set,
-                None,
-                None,
-            ),
-        ]
+        ]);
+
+        flag_predicates
     }
 
     pub fn gen_cfg_predicates(&self, address: usize, cfg: &ControlFlowGraph) -> Vec<Predicate> {
@@ -404,8 +428,11 @@ impl PredicateBuilder {
     pub fn gen_predicates(&self, address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
         let mut ret = vec![];
 
-        let skip_register_predicates =
-            PredicateBuilder::skip_register_mnemonic(trace_analyzer.get_any_mnemonic(address));
+        let skip_register_predicates = if self.arch == CpuArchitecture::X86_64 {
+            PredicateBuilder::skip_register_mnemonic(trace_analyzer.get_any_mnemonic(address))
+        } else {
+            false
+        };
 
         ret.extend(PredicateBuilder::gen_visited(address));
 

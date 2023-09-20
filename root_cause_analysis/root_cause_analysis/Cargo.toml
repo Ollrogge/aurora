@@ -19,7 +19,9 @@ itertools="*"
 rayon="*"
 bincode = "*"
 anyhow = "*"
+log = "^0.4"
 capstone ="*"
+goblin ="*"
 
 [[bin]]
 name = "rca"

@@ -49,11 +49,21 @@ impl SerializedPredicate {
 #[derive(Clone)]
 pub struct Predicate {
     pub name: String,
-    p1: Option<usize>,
-    p2: Option<usize>,
+    pub p1: Option<usize>,
+    pub p2: Option<usize>,
     function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
     pub score: f64,
     pub address: usize,
+}
+
+impl PartialEq for Predicate {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.p1 == other.p1
+            && self.p2 == other.p2
+            && self.score == other.score
+            && self.address == other.address
+    }
 }
 
 impl Predicate {

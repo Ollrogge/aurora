@@ -5,10 +5,12 @@ use crate::predicates::{Predicate, SerializedPredicate};
 use crate::trace::{Instruction, Selector, Trace, TraceVec};
 use crate::trace_integrity::TraceIntegrityChecker;
 use glob::glob;
+use nix::libc::PR_FP_EXC_NONRECOV;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::{read_to_string, File};
@@ -171,6 +173,7 @@ impl TraceAnalyzer {
             let mut cfg_collector = CFGCollector::new();
             println!("filling cfg");
             trace_analyzer.fill_cfg(&mut cfg_collector);
+            trace_analyzer.save_cfg(&config);
         }
 
         if config.check_traces {
@@ -320,6 +323,10 @@ impl TraceAnalyzer {
         ret
     }
 
+    pub fn save_cfg(&self, config: &Config) {
+        self.cfg.save(&config.output_directory);
+    }
+
     pub fn dump_scores(&self, config: &Config, filter_scores: bool, print_scores: bool) {
         let (file_name, scores) = (
             format!("{}/scores_linear.csv", config.output_directory),
@@ -369,7 +376,65 @@ impl TraceAnalyzer {
             .collect()
     }
 
-    // todo: called to_serialized twice will become problematic due to id
+    pub fn get_predicates_better_than_filter(&self, min_score: f64) -> Vec<SerializedPredicate> {
+        let mut predicates_map = self
+            .address_scores
+            .iter()
+            .filter(|(_, p)| p.score > min_score)
+            .fold(HashMap::new(), |mut acc, (addr, p)| {
+                acc.entry(addr).or_insert_with(Vec::new).push(p);
+                acc
+            });
+
+        /*
+        // same meaning
+        0x000000000020e12a -- r4 max_reg_val_greater_or_equal 0x0 -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8720885577887211) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
+        0x000000000020e12a -- r4 min_reg_val_greater_or_equal 0x0 -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8729085029311009) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
+
+        // reg_val less 0xfff is sufficient
+        0x000000000020e12a -- r4 max_reg_val_less 0xffffffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8737284480734812) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
+        0x000000000020e12a -- r4 max_reg_val_less 0xffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.874548393215861) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
+        0x000000000020e12a -- r4 min_reg_val_less 0xffffffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.875368338358241) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
+        0x000000000020e12a -- r4 min_reg_val_less 0xffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8761882835006211) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
+
+        TODO: move this filtering outside, otherwise pathrank is fucked
+        or todo: do the filtering before even saving the predicates !!
+        */
+
+        let mut filtered_predicates: Vec<SerializedPredicate> = Vec::new();
+        for preds in predicates_map.values_mut() {
+            let mut filtered: HashMap<String, &Predicate> = HashMap::new();
+            for pred in preds.iter() {
+                if pred.name.contains("flag") {
+                    let sub = pred.name.split("_").collect::<Vec<&str>>()[1];
+                    filtered.entry(sub.to_string()).or_insert(pred);
+                } else if pred.name.contains("less_or_equal") {
+                    let key = format!("{}less_or_equal{}", pred.p1.unwrap(), pred.p2.unwrap());
+                    filtered.insert(key, pred);
+                } else if pred.name.contains("greater_or_equal") {
+                    let key = format!("{}greater_or_equal{}", pred.p1.unwrap(), pred.p2.unwrap());
+                    filtered.insert(key, pred);
+                } else if pred.name.contains("reg_val_less") {
+                    match filtered.entry("reg_val_less".to_string()) {
+                        Entry::Occupied(mut entry) => {
+                            if pred.p2 < entry.get().p2 {
+                                entry.insert(pred);
+                            }
+                        }
+                        Entry::Vacant(entry) => {
+                            entry.insert(pred);
+                        }
+                    }
+                } else {
+                    filtered.insert(pred.name.clone(), pred);
+                }
+            }
+            filtered_predicates.extend(filtered.values().map(|p| p.to_serialzed()))
+        }
+
+        filtered_predicates
+    }
+
     pub fn get_predicates(&self) -> Vec<SerializedPredicate> {
         self.address_scores
             .iter()

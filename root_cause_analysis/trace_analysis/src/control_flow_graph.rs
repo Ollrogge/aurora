@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Keys;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::str::FromStr;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct BasicBlock {
     pub body: Vec<usize>,
     successors: HashSet<usize>,
@@ -29,12 +31,19 @@ impl BasicBlock {
         *self.body.last().unwrap()
     }
 
+    // basic blocks should not overlap so first address in block can be
+    // seen as a kind of id ?
+    pub fn id(&self) -> usize {
+        self.body[0]
+    }
+
     pub fn iter_addresses(&self) -> impl Iterator<Item = &usize> {
         self.body.iter()
     }
 }
 
-#[derive(Debug)]
+// bb = basic block
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ControlFlowGraph {
     addr_to_bb_exit: HashMap<usize, usize>,
     exit_addr_to_bb: HashMap<usize, BasicBlock>,
@@ -42,7 +51,9 @@ pub struct ControlFlowGraph {
 
 impl ControlFlowGraph {
     pub fn new() -> Self {
+        // new bb
         let addr_to_bb_exit = HashMap::new();
+        // last address before entering new bb
         let exit_addr_to_bb = HashMap::new();
         ControlFlowGraph {
             addr_to_bb_exit,
@@ -93,6 +104,27 @@ impl ControlFlowGraph {
         bb
     }
 
+    pub fn exists_path(&self, src: usize, dst: usize) -> bool {
+        let mut work = Vec::new();
+        work.push(src);
+
+        while let Some(addr) = work.pop() {
+            if addr == dst {
+                return true;
+            }
+            let b = self.get_bb(addr);
+            for successor in b.successors.iter() {
+                work.push(successor.clone())
+            }
+        }
+
+        false
+    }
+
+    pub fn in_same_bb(&self, addr1: usize, addr2: usize) -> bool {
+        self.get_bb(addr1) == self.get_bb(addr2)
+    }
+
     pub fn to_dot(&self) -> String {
         let mut ret = String::from_str("digraph {\n").unwrap();
 
@@ -118,6 +150,23 @@ impl ControlFlowGraph {
             .map(|bb| bb.start())
             .collect()
     }
+
+    pub fn save(&self, output_dir: &String) {
+        let file_path = format!("{}/cfg.json", output_dir);
+        let serialized_string = serde_json::to_string(&self).unwrap();
+
+        fs::write(&file_path, serialized_string)
+            .expect(&format!("Could not write file {}", file_path));
+    }
+
+    pub fn load(input_dir: &String) -> Self {
+        let file_path = format!("{}/cfg.json", input_dir);
+
+        let content =
+            fs::read_to_string(&file_path).expect(&format!("Could not read file {}", file_path));
+
+        serde_json::from_str(&content).expect("Unable to deserialize cfg")
+    }
 }
 
 pub struct CFGCollector {
@@ -133,23 +182,15 @@ impl CFGCollector {
         }
     }
 
+    // also considers normal edges
     pub fn add_edge(&mut self, src: usize, dst: usize) {
-        if !self.predecessors.contains_key(&src) {
-            self.predecessors.insert(src, HashSet::new());
-        }
-        if !self.predecessors.contains_key(&dst) {
-            self.predecessors.insert(dst, HashSet::new());
-        }
+        self.predecessors.entry(src).or_insert_with(HashSet::new);
+        self.predecessors.entry(dst).or_insert_with(HashSet::new);
 
-        if !self.successors.contains_key(&src) {
-            self.successors.insert(src, HashSet::new());
-        }
+        self.successors.entry(src).or_insert_with(HashSet::new);
+        self.successors.entry(dst).or_insert_with(HashSet::new);
 
-        if !self.successors.contains_key(&dst) {
-            self.successors.insert(dst, HashSet::new());
-        }
         self.predecessors.get_mut(&dst).unwrap().insert(src);
-
         self.successors.get_mut(&src).unwrap().insert(dst);
     }
 
@@ -175,7 +216,7 @@ impl CFGCollector {
             done.insert(node);
             ret.push(node);
 
-            for successors in self.successors.get(&node) {
+            if let Some(successors) = self.successors.get(&node) {
                 for successor in successors {
                     todo.push(*successor);
                 }

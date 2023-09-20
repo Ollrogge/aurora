@@ -20,11 +20,6 @@ fn main() {
         );
     }
 
-    if config.compound_predicates {
-        println!("monitoring compound predicates");
-        let monitoring_time: Instant = Instant::now();
-    }
-
     if config.monitor_predicates {
         println!("monitoring predicates");
         let monitoring_time: Instant = Instant::now();

@@ -22,17 +22,10 @@ pub fn analyze_traces(config: &Config) {
     println!("dumping linear scores");
     trace_analyzer.dump_scores(&trace_analysis_config, false, false);
 
-    let predicates = trace_analyzer.get_predicates_better_than(0.9);
+    let predicates = trace_analyzer.get_predicates_better_than_filter(0.9);
 
     serialize_mnemonics(config, "mnemonics.json", &predicates, &trace_analyzer);
     serialize_predicates(config, "predicates.json", &predicates);
-
-    // todo: get_predicate re-initializes serializedpredicates and fucks up ids
-    if config.compound_predicates {
-        let predicates = trace_analyzer.get_predicates();
-        serialize_mnemonics(config, "all_mnemonics.json", &predicates, &trace_analyzer);
-        serialize_predicates(config, "all_predicates.json", &predicates);
-    }
 }
 
 fn serialize_predicates(

@@ -56,9 +56,8 @@ pub struct Config {
         long = "monitor-from-file",
         help = "Load monitoring data from a file instead of using ptrace"
     )]
+    #[structopt(long = "compound-predicates", help = "Consider compound predicates")]
     pub compound_predicates: bool,
-    #[structopt(long = "compound_predicates", help = "Consider compound predicates")]
-    pub monitor_from_file: bool,
     #[structopt(
         long = "--monitor-timeout",
         default_value = "60",

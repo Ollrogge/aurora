@@ -13,6 +13,7 @@ use predicate::*;
 use ptracer::{ContinueMode, Ptracer};
 use rflags::RFlags;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::Path;
 use std::time::Instant;
@@ -94,9 +95,6 @@ impl RootCauseCandidate {
 
                         println!("Memory read. Not implemented {:#018x}", address);
                         unimplemented!();
-
-                        0
-
                         /*
 
                         let value = ptracer::read(
@@ -121,10 +119,10 @@ impl RootCauseCandidate {
 
                 Ok(match compare.compare {
                     Compare::Equal => value == compare.value,
+                    Compare::NotEqual => value != compare.value,
                     Compare::Greater => value > compare.value,
                     Compare::GreaterOrEqual => value >= compare.value,
                     Compare::Less => value < compare.value,
-                    Compare::NotEqual => value != compare.value,
                 })
             }
             Predicate::Edge(ref edge) => match edge.transition {
@@ -502,8 +500,7 @@ pub fn rank_predicates_arm(
             acc
         });
 
-    // TODO: create bitmap for multi-location predicates
-    let mut satisfaction = vec![];
+    let mut satisfaction: Vec<usize> = Vec::new();
     for window in detailed_trace.windows(2) {
         match window {
             [prev, cur] => {
@@ -514,8 +511,8 @@ pub fn rank_predicates_arm(
 
                         assert!(pc == rcc.address);
 
-                        if satisfied {
-                            satisfaction.push((rcc.address, rcc.pred_id, rcc.predicate.clone()));
+                        if satisfied && !satisfaction.contains(&rcc.pred_id) {
+                            satisfaction.push(rcc.pred_id);
                         }
                     }
                 }
@@ -524,10 +521,7 @@ pub fn rank_predicates_arm(
         }
     }
 
-    Ok(satisfaction
-        .into_iter()
-        .map(|(address, pred_id, _)| pred_id)
-        .collect())
+    Ok(satisfaction)
 }
 
 pub fn spawn_dbg(path: &Path, args: &[String]) -> Ptracer {

@@ -8,6 +8,7 @@ use rayon::prelude::*;
 pub struct PredicateAnalyzer {}
 
 impl PredicateAnalyzer {
+    // Vec because there can be multiple best predicates for an address (same score)
     pub fn evaluate_best_predicates_at_address(
         address: usize,
         trace_analyzer: &TraceAnalyzer,
@@ -18,6 +19,12 @@ impl PredicateAnalyzer {
 
         if predicates.is_empty() {
             return vec![Predicate::gen_empty(address)];
+        }
+
+        if address == 0x200fd4 {
+            for p in predicates.iter() {
+                println!("TEST: {}", p.name);
+            }
         }
 
         let mut ret: Vec<Predicate> = predicates
@@ -34,57 +41,6 @@ impl PredicateAnalyzer {
         ret.into_iter()
             .filter(|p| (p.score - highest_score).abs() < std::f64::EPSILON)
             .collect()
-    }
-
-    fn evaluate_predicate2(trace_analyzer: &TraceAnalyzer, mut predicate: Predicate) -> Predicate {
-        // False Negatives: Crashes that the predicate failed to predict
-        let cf = trace_analyzer
-            .crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&predicate.address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| !predicate.execute(i))
-            .count() as f64;
-
-        // True Positives: Crashes correctly predicted by the predicate
-        let ct = trace_analyzer
-            .crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&predicate.address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| predicate.execute(i))
-            .count() as f64;
-
-        // False Positives: Non-crashes that the predicate mistakenly predicted as crashes
-        let nf = trace_analyzer
-            .non_crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&predicate.address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| predicate.execute(i))
-            .count() as f64;
-
-        // True Negatives: Non-crashes correctly identified by the predicate
-        let nt = trace_analyzer
-            .non_crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&predicate.address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| !predicate.execute(i))
-            .count() as f64;
-
-        let theta = 0.5 * (cf / (cf + ct) + nf / (nf + nt));
-        predicate.score = 2.0 * (theta - 0.5).abs();
-        if predicate.score.is_nan() {
-            println!("NaN ? {} {} {} {} {}", predicate.score, cf, nt, nf, ct);
-            predicate.score = 0.0;
-        }
-        //println!("Score: {}", predicate.score);
-        predicate
     }
 
     fn evaluate_predicate(trace_analyzer: &TraceAnalyzer, mut predicate: Predicate) -> Predicate {
