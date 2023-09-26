@@ -5,9 +5,9 @@ use std::fs::read_to_string;
 use std::process::Command;
 use structopt::StructOpt;
 
-use root_cause_analysis::config::Config;
-use root_cause_analysis::monitor::executable;
-use root_cause_analysis::utils::{parse_hex, write_file};
+use crate::config::Config;
+use crate::monitor::executable;
+use crate::utils::{parse_hex, write_file};
 
 use trace_analysis::config::CpuArchitecture;
 
@@ -22,7 +22,7 @@ fn addr2line_args(config: &Config, address: usize) -> Vec<String> {
     .collect()
 }
 
-fn addr2line(config: &Config, address: usize) -> String {
+pub fn addr2line(config: &Config, address: usize) -> String {
     let args = addr2line_args(config, address);
 
     let command = match config.cpu_architecture {

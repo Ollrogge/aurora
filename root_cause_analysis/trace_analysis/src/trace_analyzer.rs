@@ -279,13 +279,11 @@ impl TraceAnalyzer {
         let ret: Vec<_> = match selector {
             Selector::RegMin => self
                 .iter_all_instructions_at_address(address)
-                .filter(|i| i.registers_min.get(reg_index.unwrap()).is_some())
-                .map(|i| i.registers_min.get(reg_index.unwrap()).unwrap().value())
+                .filter_map(|i| i.registers_min.get(reg_index?).map(|reg| reg.value()))
                 .collect(),
             Selector::RegMax => self
                 .iter_all_instructions_at_address(address)
-                .filter(|i| i.registers_max.get(reg_index.unwrap()).is_some())
-                .map(|i| i.registers_max.get(reg_index.unwrap()).unwrap().value())
+                .filter_map(|i| i.registers_max.get(reg_index?).map(|reg| reg.value()))
                 .collect(),
             _ => unreachable!(),
         };

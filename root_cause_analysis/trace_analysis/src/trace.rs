@@ -362,8 +362,7 @@ impl TraceVec {
         address: usize,
     ) -> impl Iterator<Item = &Instruction> {
         self.iter()
-            .filter(move |t| t.instructions.contains_key(&address))
-            .map(move |t| t.instructions.get(&address).unwrap())
+            .filter_map(move |t| t.instructions.get(&address))
     }
 
     pub fn len(&self) -> usize {

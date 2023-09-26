@@ -21,12 +21,6 @@ impl PredicateAnalyzer {
             return vec![Predicate::gen_empty(address)];
         }
 
-        if address == 0x200fd4 {
-            for p in predicates.iter() {
-                println!("TEST: {}", p.name);
-            }
-        }
-
         let mut ret: Vec<Predicate> = predicates
             .into_par_iter()
             .map(|p| PredicateAnalyzer::evaluate_predicate(trace_analyzer, p))

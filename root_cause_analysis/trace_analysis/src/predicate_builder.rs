@@ -335,7 +335,7 @@ impl PredicateBuilder {
                 !trace_analyzer
                     .values_at_address(address, selector, Some(*reg_index))
                     .into_iter()
-                    .all(|v: u64| {
+                    .any(|v: u64| {
                         trace_analyzer
                             .memory_addresses
                             .0

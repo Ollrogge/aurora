@@ -1,3 +1,4 @@
+pub mod addr2line;
 pub mod config;
 pub mod monitor;
 pub mod rankings;
