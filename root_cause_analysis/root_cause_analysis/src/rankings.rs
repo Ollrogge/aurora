@@ -1,4 +1,4 @@
-use crate::addr2line::addr2line;
+use crate::addr2line_lib::addr2line;
 use crate::config::Config;
 use crate::traces::{deserialize_mnemonics, deserialize_predicates};
 use crate::utils::{glob_paths, read_file, write_file};
@@ -198,6 +198,10 @@ fn get_taken_path(input_path: String, functions: &Vec<usize>) -> Result<Vec<usiz
 
         if let Some(func_addr) = func_addr {
             // naive way to prevent loops from being on path
+            // this just makes the path smaller and therefore calculation faster
+            // the filtering step of predicates having to be on path, and only
+            // considering unique predicates woudl also take care of removing
+            // loops and stuff
             if !path.contains(&func_addr) {
                 path.push(func_addr);
             }
@@ -497,7 +501,9 @@ fn dumb_compound_rankings(
             let pred = &predicates[pred_id];
             //let func_addr = find_func_for_addr(&functions, pred.address).unwrap();
             let mnemonic = &mnemonics[&pred.address];
-            let line = addr2line(config, pred.address);
+            let output = addr2line(config, pred.address);
+            let line = output.splitn(2, ' ').nth(1).unwrap_or("");
+
             println!(
                 "#{} -- {} -- {} -- {}",
                 idx,
@@ -506,11 +512,14 @@ fn dumb_compound_rankings(
                 line
             );
         }
+
+        let output = addr2line(config, crash_addr);
+        let line = output.splitn(2, ' ').nth(1).unwrap_or("");
         println!(
-            "#{} {} {:x} (CRASH LOCATION)",
+            "#{} CRASH LOCATION: {:#018x} -- {}",
             ranking.len(),
-            addr_to_func_name[&find_func_for_addr(&functions, crash_addr).unwrap()],
-            crash_addr
+            crash_addr,
+            line
         );
 
         println!("{}", "-".repeat(0x20));

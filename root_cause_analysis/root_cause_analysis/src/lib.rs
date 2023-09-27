@@ -1,4 +1,4 @@
-pub mod addr2line;
+pub mod addr2line_lib;
 pub mod config;
 pub mod monitor;
 pub mod rankings;
