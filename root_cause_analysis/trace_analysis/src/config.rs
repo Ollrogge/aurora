@@ -37,7 +37,7 @@ impl FromStr for TraceFormat {
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum CpuArchitecture {
-    X86_64,
+    X86,
     ARM,
 }
 
@@ -46,7 +46,7 @@ impl FromStr for CpuArchitecture {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_uppercase().as_str() {
-            "X86_64" => Ok(CpuArchitecture::X86_64),
+            "X86_64" => Ok(CpuArchitecture::X86),
             "ARM" => Ok(CpuArchitecture::ARM),
             _ => Err(format!("Invalid cpu arch: {}", s).into()),
         }

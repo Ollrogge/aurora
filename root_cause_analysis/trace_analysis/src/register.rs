@@ -54,7 +54,7 @@ lazy_static! {
         "pc",
         "xPSR",
         "CPSR",
-        //"SPSR", (not implemented by hoedur)
+        "SPSR", // (not implemented by hoedur)
         "memory_address",
         "memory_value",
     ];
@@ -747,9 +747,8 @@ pub enum RegisterArm {
 
     // Saved Program Status Registers
     SPSR,
-
-    MemoryAddress,
-    MemoryValue,
+    MemoryAddress, // address written
+    MemoryValue,   // value written
 }
 
 impl RegisterArm {
@@ -773,8 +772,8 @@ impl RegisterArm {
             ARM_REG_PC => Some(RegisterArm::PC),
             ARM_REG_SPSR => Some(RegisterArm::SPSR),
             _ => {
-                println!("Registerarm: unhandled regid: {:?}", id);
-                unimplemented!();
+                //println!("Registerarm: unhandled regid: {:?}", id);
+                //unimplemented!();
                 None
             }
         }

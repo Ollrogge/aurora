@@ -129,7 +129,7 @@ impl TraceIntegrityChecker {
             for instruction in trace.instructions.values() {
                 let regs = match self.arch {
                     CpuArchitecture::ARM => &*REGISTERS_ARM,
-                    CpuArchitecture::X86_64 => &*REGISTERS_X86,
+                    CpuArchitecture::X86 => &*REGISTERS_X86,
                 };
                 (0..regs.len())
                     .into_iter()

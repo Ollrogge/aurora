@@ -22,7 +22,7 @@ pub fn analyze_traces(config: &Config) {
     println!("dumping linear scores");
     trace_analyzer.dump_scores(&trace_analysis_config, false, false);
 
-    let predicates = trace_analyzer.get_predicates_better_than_filter(0.95);
+    let predicates = trace_analyzer.get_predicates_better_than_filter(0.90);
 
     serialize_mnemonics(config, "mnemonics.json", &predicates, &trace_analyzer);
     serialize_predicates(config, "predicates.json", &predicates);

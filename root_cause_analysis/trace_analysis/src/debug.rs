@@ -58,7 +58,7 @@ pub fn debug_predicate_at_address(address: usize, trace_analyzer: &TraceAnalyzer
     let predicates = PredicateAnalyzer::evaluate_best_predicates_at_address(
         address,
         trace_analyzer,
-        CpuArchitecture::X86_64,
+        CpuArchitecture::X86,
     );
 
     for predicate in predicates.iter() {

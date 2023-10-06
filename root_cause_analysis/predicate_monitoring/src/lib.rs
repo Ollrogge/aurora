@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::time::Instant;
 use trace_analysis::predicates::SerializedPredicate;
-use trace_analysis::register::{user_regs_struct_arm, RegisterValue};
+use trace_analysis::register::{user_regs_struct_arm, RegisterArm, RegisterValue};
 
 use zydis::*;
 
@@ -70,8 +70,8 @@ pub struct RootCauseCandidate {
 }
 
 impl RootCauseCandidate {
-    // function is called on rootcause candidates for prev.pc, therefore if
-    // prev.pc is e.g. a mov inst then reg.value(cur) checks the value after the mov
+    // function checks predicate satisfcation for predicates with address == prev.pc
+    // cur is used to check the values after the predicate instruction has been executed
     pub fn satisfied_arm(
         &self,
         prev: &user_regs_struct_arm,
@@ -80,36 +80,23 @@ impl RootCauseCandidate {
         let old_rip = prev.pc;
         let new_rip = cur.pc;
 
-        //println!("Regs: cpsr:{:x} xpsr: {:x}", prev.cpsr, prev.xpsr);
         let xpsr_flags = XPSR_Flags::from_bits_truncate(cur.xpsr);
         match &self.predicate {
             // todo: explain the cases with comments
             Predicate::Compare(ref compare) => {
                 let value = match compare.destination {
                     ValueDestination::Register(ref reg) => reg.value(cur),
-                    // todo: check why memory called on prev
+                    // address accessed
                     ValueDestination::Address(ref mem) => mem.address(prev),
-                    ValueDestination::Memory(ref access_size, ref mem) => {
-                        let address = mem.address(prev);
-                        debug!("address = {:#018x}", address);
+                    // value written at address
+                    ValueDestination::MemoryVal(ref access_size, ref mem, ref regid) => {
+                        let val = RegisterArm::from_regid(*regid).unwrap().value(prev);
+                        //println!("Memory write. Val {:#018x}", val);
 
-                        println!("Memory read. Not implemented {:#018x}", address);
-                        unimplemented!();
-                        /*
-
-                        let value = ptracer::read(
-                            dbg.event().pid().expect("pid missing"),
-                            address as nix::sys::ptrace::AddressType,
-                        )
-                        .expect("failed to read memory value")
-                            as usize;
-                        debug!("raw value = {:#018x}", value);
-
-                        match 1usize.checked_shl(*access_size as u32) {
-                            Some(mask) => value & mask,
-                            _ => value,
-                        }
-                        */
+                        val as usize
+                    }
+                    ValueDestination::Memory(_, _) => {
+                        anyhow::bail!("Unexpected ValDestination::Memory for ARM")
                     }
                 };
                 debug!(
@@ -192,6 +179,9 @@ impl RootCauseCandidate {
                             Some(mask) => value & mask,
                             _ => value,
                         }
+                    }
+                    ValueDestination::MemoryVal(_, _, _) => {
+                        anyhow::bail!("Unepected ValueDestination::MemoryVal for x86")
                     }
                 };
                 debug!(
@@ -474,18 +464,25 @@ pub fn rank_predicates_arm(
     predicates: &Vec<SerializedPredicate>,
     detailed_trace: Vec<user_regs_struct_arm>,
     binary: &Vec<u8>,
+    text_info: (u64, u64),
 ) -> Result<Vec<usize>> {
     // rccs = root cause candidates
     let rccs: HashMap<usize, Vec<RootCauseCandidate>> = predicates
         .into_iter()
         .filter_map(|pred| {
             let address = pred.address;
+
+            let (text_vaddr, text_off) = text_info;
+
+            let off = address - text_vaddr as usize + text_off as usize;
             let id = pred.id;
 
-            let insts = cs.disasm_count(binary, address as u64, 1).ok()?;
-            let isn = insts.iter().next()?;
+            // ARMv7-M thumb2 is a mix of 2 and 4 byte instructions, therefore
+            // we try to disassemble 4 bytes here and take the first valid inst found
+            let inst = cs.disasm_all(&binary[off..(off + 4)], 0).ok()?;
+            let inst = inst.iter().next()?;
 
-            let detail = cs.insn_detail(isn).ok()?;
+            let detail = cs.insn_detail(inst).ok()?;
             let converted = predicate::convert_predicate_arm(&pred.name, detail).ok()??;
 
             Some(RootCauseCandidate {

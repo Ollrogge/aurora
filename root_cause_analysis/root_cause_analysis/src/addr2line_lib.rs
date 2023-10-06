@@ -18,7 +18,7 @@ pub fn addr2line(config: &Config, address: usize) -> String {
     let args = addr2line_args(config, address);
 
     let command = match config.cpu_architecture {
-        CpuArchitecture::X86_64 => "addr2line",
+        CpuArchitecture::X86 => "addr2line",
         CpuArchitecture::ARM => "arm-none-eabi-addr2line",
     };
 

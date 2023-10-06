@@ -30,8 +30,3 @@ path = "src/main.rs"
 [[bin]]
 name = "addr2line"
 path = "src/addr2line.rs"
-
-[features]
-default = ["arm"]
-arm = []
-x86_64 = []

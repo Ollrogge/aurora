@@ -163,10 +163,23 @@ fn find_most_likely_crash_path(config: &Config, functions: &Vec<usize>) -> Vec<u
                 },
             );
 
-    let mut pairs: Vec<_> = paths.into_iter().collect();
-    pairs.sort_by(|a, b| a.1.cmp(&b.1));
+    let mut paths: Vec<_> = paths.into_iter().collect();
 
-    pairs[pairs.len() - 1].0.clone()
+    // sort descending
+    paths.sort_by(|a, b| b.1.cmp(&a.1));
+    let top_score = paths[0].1;
+
+    let paths: Vec<(Vec<usize>, u64)> = paths
+        .into_iter()
+        .filter(|(_, score)| *score == top_score)
+        .collect();
+
+    println!("Amount of pairs with same score: {} \n", paths.len());
+
+    // todo: this will probably not hold for all datasets
+    assert!(paths.len() == 1);
+
+    paths[0].0.clone()
 
     //paths.into_iter().map(|(key, _value)| key).collect()
 }
@@ -271,9 +284,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         .expect("Unable to find binary for compound ranking");
 
     let binary = fs::read(binary_path)?;
-
     let elf = Elf::parse(&binary).expect("Failed to parse elf");
-    let strtab = &elf.strtab; // Get the string table
 
     let mut functions: Vec<usize> = elf
         .syms
@@ -286,17 +297,6 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         .collect();
 
     functions.sort();
-
-    let addr_to_func_name: HashMap<usize, String> = elf
-        .syms
-        .iter()
-        .map(|sym| {
-            (
-                (sym.st_value & !1) as usize,
-                strtab.get_at(sym.st_name).unwrap_or_default().to_string(),
-            )
-        })
-        .collect();
 
     let predicates: HashMap<usize, SerializedPredicate> = deserialize_predicates(config)
         .into_iter()
@@ -316,15 +316,6 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         }
 
         for ranking in deduplicate_ranking(full_ranking, &predicates, &functions) {
-            /*
-            // using combinations func preserves order so we know that for a pair
-            // [a, b], b is a successor of a in CFG
-            for subset in (2..=3).flat_map(|i| ranking.iter().combinations(i)) {
-                *compound_predicates
-                    .entry(subset.iter().map(|&&&id| id).collect::<Vec<usize>>())
-                    .or_insert(0) += 1;
-            }
-            */
             let mut preds_on_path: Vec<usize> = ranking
                 .iter()
                 .filter(|&id| {
@@ -381,6 +372,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
             *compound_predicates
                 .entry(preds_on_path.iter().map(|&val| val).collect())
                 .or_insert(0) += preds_on_path.len() as u64;
+            //.or_insert(0) += 1 as u64;
         }
     }
 
@@ -404,6 +396,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
     };
 
     let mut sorted_entries: Vec<_> = compound_predicates.iter().collect();
+    assert!(sorted_entries.len() > 0);
     sorted_entries.sort_by(|a, b| compare_compound(a, b));
 
     let top_score = sorted_entries[0].1;
@@ -447,14 +440,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
 
     //let ret = vec![sorted_entries[0].0.clone()];
 
-    dumb_compound_rankings(
-        config,
-        ret,
-        path[path.len() - 1],
-        predicates,
-        functions,
-        addr_to_func_name,
-    );
+    dumb_compound_rankings(config, ret, path[path.len() - 1], predicates);
 
     Ok(())
 }
@@ -492,10 +478,9 @@ fn dumb_compound_rankings(
     rankings: Vec<Vec<usize>>,
     crash_addr: usize,
     predicates: HashMap<usize, SerializedPredicate>,
-    functions: Vec<usize>,
-    addr_to_func_name: HashMap<usize, String>,
 ) {
     let mnemonics = deserialize_mnemonics(config);
+    let mut content = Vec::new();
     for ranking in rankings.iter() {
         for (idx, pred_id) in ranking.iter().enumerate() {
             let pred = &predicates[pred_id];
@@ -504,6 +489,15 @@ fn dumb_compound_rankings(
             let output = addr2line(config, pred.address);
             let line = output.splitn(2, ' ').nth(1).unwrap_or("");
 
+            content.push(format!(
+                "#{} -- {} -- {} -- {}\n",
+                idx,
+                pred.to_string(),
+                mnemonic,
+                line
+            ));
+
+            /*
             println!(
                 "#{} -- {} -- {} -- {}",
                 idx,
@@ -511,20 +505,35 @@ fn dumb_compound_rankings(
                 mnemonic,
                 line
             );
+            */
         }
 
         let output = addr2line(config, crash_addr);
         let line = output.splitn(2, ' ').nth(1).unwrap_or("");
+        content.push(format!(
+            "#{} CRASH LOCATION: {:#018x} -- {}\n",
+            ranking.len(),
+            crash_addr,
+            line
+        ));
+
+        /*
         println!(
             "#{} CRASH LOCATION: {:#018x} -- {}",
             ranking.len(),
             crash_addr,
             line
         );
-
-        println!("{}", "-".repeat(0x20));
+        */
+        content.push(format!("{}\n", "-".repeat(0x20)));
+        // println!("{}", "-".repeat(0x20));
         //break;
     }
+
+    write_file(
+        &format!("{}/ranked_compound_predicates.txt", config.eval_dir),
+        content.into_iter().collect(),
+    );
 }
 
 fn dump_ranked_predicates(

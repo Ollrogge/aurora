@@ -80,7 +80,7 @@ impl Registers {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Memory {
     pub min_address: u64,
     pub max_address: u64,
@@ -149,11 +149,15 @@ impl Instruction {
 pub struct SerializedInstruction {
     pub address: usize,
     pub mnemonic: String,
+    // minimum values of registers at instruction
     pub registers_min: Registers,
+    // maximum values of registers at instruction
     pub registers_max: Registers,
+    // last values of registers at instruction
     pub registers_last: Registers,
     pub last_successor: usize,
     pub count: usize,
+    // Memory access information, if instruction accesses memory
     pub memory: Option<Memory>,
 }
 
@@ -169,7 +173,7 @@ impl SerializedInstruction {
                     RegisterArm::MemoryAddress as usize,
                     RegisterArm::MemoryValue as usize,
                 ),
-                CpuArchitecture::X86_64 => (
+                CpuArchitecture::X86 => (
                     RegisterX86::MemoryAddress as usize - 1,
                     RegisterX86::MemoryValue as usize - 1,
                 ),

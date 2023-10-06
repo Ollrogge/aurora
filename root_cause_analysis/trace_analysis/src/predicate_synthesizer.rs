@@ -77,7 +77,7 @@ impl PredicateSynthesizer {
     ) -> Vec<Predicate> {
         let regs = match self.arch {
             CpuArchitecture::ARM => &*REGISTERS_ARM,
-            CpuArchitecture::X86_64 => &*REGISTERS_X86,
+            CpuArchitecture::X86 => &*REGISTERS_X86,
         };
         (0..regs.len())
             .into_par_iter()
@@ -87,16 +87,16 @@ impl PredicateSynthesizer {
             /* skip rsp */
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::SP as usize,
-                CpuArchitecture::X86_64 => *reg_index != RegisterX86::Rsp as usize,
+                CpuArchitecture::X86 => *reg_index != RegisterX86::Rsp as usize,
             })
-            // filter pc in ARM trace
+            // filter pc in ARM trace (X86_64 doesnt contain rip reg)
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::PC as usize,
-                CpuArchitecture::X86_64 => true,
+                CpuArchitecture::X86 => true,
             })
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::LR as usize,
-                CpuArchitecture::X86_64 => true,
+                CpuArchitecture::X86 => true,
             })
             /* skip EFLAGS */
             .filter(|reg_index| match self.arch {
@@ -105,12 +105,12 @@ impl PredicateSynthesizer {
                         && *reg_index != RegisterArm::CPSR as usize
                         && *reg_index != RegisterArm::SPSR as usize
                 }
-                CpuArchitecture::X86_64 => *reg_index != (RegisterX86::Eflags as usize - 1),
+                CpuArchitecture::X86 => *reg_index != (RegisterX86::Eflags as usize - 1),
             })
             /* skip memory address */
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
-                CpuArchitecture::X86_64 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
+                CpuArchitecture::X86 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
             })
             /* skip all valid memory regions */
             /* todo: more fine grained control. e.g. read-only mem can be read */

@@ -4,6 +4,7 @@ use crate::utils::{glob_paths, read_file};
 use anyhow::{anyhow, Context, Result};
 use capstone::arch::arm::{self, ArmInsn, ArmOperandType};
 use capstone::prelude::*;
+use goblin::elf::{program_header, Elf};
 use predicate_monitoring::{rank_predicates, rank_predicates_arm};
 use rayon::prelude::*;
 use std::convert::TryFrom;
@@ -11,12 +12,13 @@ use std::fs::File;
 use std::fs::{self, read, read_to_string, remove_file};
 use std::process::{Child, Command, Stdio};
 use std::time::Instant;
+use trace_analysis::config::CpuArchitecture;
 use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::register::user_regs_struct_arm;
+use trace_analysis::trace_analyzer::{blacklist_path, read_crash_blacklist};
 
 pub fn monitor_predicates(config: &Config) -> Result<()> {
-    #[cfg(not(feature = "arm"))]
-    {
+    if config.cpu_architecture == CpuArchitecture::X86 {
         let blacklist_paths =
             read_crash_blacklist(config.blacklist_crashes(), &config.crash_blacklist_path);
         let cmd_line = cmd_line(&config);
@@ -29,9 +31,8 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
             .filter(|r| !r.is_empty())
             .collect();
         serialize_rankings(config, &rankings);
-    }
-    #[cfg(feature = "arm")]
-    {
+        Ok(())
+    } else {
         // todo: different way than depending on the fact that the binary is in the parent dir
         let pattern = format!("{}/*_trace", config.eval_dir);
         let binary_path = glob_paths(pattern)
@@ -39,8 +40,24 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
             .expect("No binary found for monitoring");
 
         let binary = fs::read(binary_path)?;
+        let elf = Elf::parse(&binary)?;
+
+        let text_info = {
+            let mut res = Err(anyhow::anyhow!("Unable to find text section"));
+            for section in &elf.section_headers {
+                if let Some(section_name) = elf.shdr_strtab.get_at(section.sh_name) {
+                    if section_name == ".text" {
+                        res = Ok((section.sh_addr, section.sh_offset));
+                        break;
+                    }
+                }
+            }
+
+            res?
+        };
+
         let predicate_file = &format!("{}/{}", config.eval_dir, predicate_file_name());
-        let rankings = monitor_predicates_arm(config, &binary, predicate_file)?;
+        let rankings = monitor_predicates_arm(config, &binary, text_info, predicate_file)?;
 
         serialize_rankings(config, &rankings);
 
@@ -51,6 +68,7 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
 fn monitor_predicates_arm(
     config: &Config,
     binary: &Vec<u8>,
+    text_info: (u64, u64),
     file_path: &String,
 ) -> Result<Vec<Vec<usize>>> {
     let predicates = deserialize_predicates(file_path);
@@ -62,7 +80,7 @@ fn monitor_predicates_arm(
     glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
         .into_par_iter()
         .enumerate()
-        .map(|(_, path)| monitor_arm(path, &binary, &predicates))
+        .map(|(_, path)| monitor_arm(path, &binary, text_info, &predicates))
         .filter(|r| match r {
             Ok(val) => !val.is_empty(),
             Err(_) => true,
@@ -79,6 +97,7 @@ fn deserialize_predicates(predicate_file: &String) -> Vec<SerializedPredicate> {
 pub fn monitor_arm(
     input_path: String,
     binary: &Vec<u8>,
+    text_info: (u64, u64),
     predicates: &Vec<SerializedPredicate>,
 ) -> Result<Vec<usize>> {
     let f = File::open(input_path).context("open monitor file")?;
@@ -106,7 +125,7 @@ pub fn monitor_arm(
         .build()
         .expect("failed to init capstone");
 
-    rank_predicates_arm(cs, predicates, regs, binary)
+    rank_predicates_arm(cs, predicates, regs, binary, text_info)
 }
 
 pub fn monitor(

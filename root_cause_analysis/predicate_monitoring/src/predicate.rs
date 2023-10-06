@@ -36,8 +36,11 @@ pub struct ComparePredicate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueDestination {
+    // Memory location is read into reg
     Address(MemoryLocation),
+    // Value is read from memory into reg
     Memory(AccessSize, MemoryLocation),
+    MemoryVal(AccessSize, MemoryLocation, RegId),
     Register(Register),
 }
 
@@ -322,20 +325,48 @@ pub fn convert_predicate_arm(
                     _ => None,
                 });
 
-        log::info!(
-            "reg_val memory locations: {:?} parts: {:?}",
-            memory_locations,
-            parts
-        );
+        let mut memory_locations = Vec::new();
+        let mut source_regs = Vec::new();
 
-        let memory = memory_locations
-            .last()
-            .and_then(|op| Some(MemoryLocation::from_arm_op_mem(op)));
+        for op in arm_isn_detail.operands() {
+            match op.op_type {
+                ArmOperandType::Mem(mem) => memory_locations.push(mem),
+                ArmOperandType::Reg(reg) if memory_locations.is_empty() => source_regs.push(reg), // Before any memory operand is found
+                _ => {}
+            }
+        }
 
         let destination = match parts[0] {
-            "memory_address" => ValueDestination::Address(memory.expect("no memory location")),
-            // todo: is operand_width always 4 byte ?
-            "memory_value" => ValueDestination::Memory(4, memory.expect("no memory location")),
+            // memory_address = address written
+            // memory_value = value written at address
+            "memory_value" | "memory_address" => {
+                // can happen e.g. for pop     {r4, r5, r6, r7, r8, r9, r10, r11, pc}
+                // in this case we handle it with normal register predicates
+                // and therefore skip it here
+                if memory_locations.len() == 0x0 {
+                    return Ok(None);
+                }
+
+                // there should only ever be 1 memory location operand and source reg
+                assert!(memory_locations.len() == 1);
+                assert!(source_regs.len() == 1);
+
+                let memory = MemoryLocation::from_arm_op_mem(memory_locations[0]);
+                let source_reg = source_regs[0];
+                /*
+                println!(
+                    "reg_val memory locations: {:?} source: {:?}, parts: {:?}",
+                    memory, source_reg, parts
+                );
+                */
+
+                if parts[0] == "memory_value" {
+                    // todo: is operand_width always 4 byte ?
+                    ValueDestination::MemoryVal(4, memory, source_reg)
+                } else {
+                    ValueDestination::Address(memory)
+                }
+            }
             register => ValueDestination::Register(
                 RegisterArm::from_str(register)
                     .expect("failed to parse register")

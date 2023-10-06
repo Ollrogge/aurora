@@ -73,7 +73,7 @@ impl PredicateBuilder {
     ) -> Vec<Predicate> {
         let flags_reg_idx = match self.arch {
             CpuArchitecture::ARM => RegisterArm::xPSR as usize,
-            CpuArchitecture::X86_64 => RegisterX86::Eflags as usize,
+            CpuArchitecture::X86 => RegisterX86::Eflags as usize,
         };
 
         if !trace_analyzer.any_instruction_at_address_contains_reg(address, flags_reg_idx) {
@@ -290,7 +290,7 @@ impl PredicateBuilder {
     ) -> Vec<Predicate> {
         let regs = match self.arch {
             CpuArchitecture::ARM => &*REGISTERS_ARM,
-            CpuArchitecture::X86_64 => &*REGISTERS_X86,
+            CpuArchitecture::X86 => &*REGISTERS_X86,
         };
         (0..regs.len())
             .into_iter()
@@ -300,7 +300,7 @@ impl PredicateBuilder {
             .filter(|reg_index| {
                 match self.arch {
                     /* skip RSP */
-                    CpuArchitecture::X86_64 => *reg_index != RegisterX86::Rsp as usize,
+                    CpuArchitecture::X86 => *reg_index != RegisterX86::Rsp as usize,
                     /* skip sp */
                     CpuArchitecture::ARM => *reg_index != (RegisterArm::SP as usize),
                 }
@@ -308,17 +308,17 @@ impl PredicateBuilder {
             // skip ARM trace pc member
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::PC as usize,
-                CpuArchitecture::X86_64 => true,
+                CpuArchitecture::X86 => true,
             })
             .filter(|reg_index| match self.arch {
                 CpuArchitecture::ARM => *reg_index != RegisterArm::LR as usize,
-                CpuArchitecture::X86_64 => true,
+                CpuArchitecture::X86 => true,
             })
             .filter(|reg_index| {
                 match self.arch {
                     /* skip EFLAGS */
                     /* -1 as x86_64 has no rip in registers */
-                    CpuArchitecture::X86_64 => *reg_index != (RegisterX86::Eflags as usize - 1),
+                    CpuArchitecture::X86 => *reg_index != (RegisterX86::Eflags as usize - 1),
                     CpuArchitecture::ARM => {
                         *reg_index != (RegisterArm::xPSR as usize)
                             && *reg_index != (RegisterArm::CPSR as usize)
@@ -327,7 +327,7 @@ impl PredicateBuilder {
             })
             /* skip memory address */
             .filter(|reg_index| match self.arch {
-                CpuArchitecture::X86_64 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
+                CpuArchitecture::X86 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
                 CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
             })
             // ram addresses in registers are too noisy
@@ -428,7 +428,7 @@ impl PredicateBuilder {
     pub fn gen_predicates(&self, address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
         let mut ret = vec![];
 
-        let skip_register_predicates = if self.arch == CpuArchitecture::X86_64 {
+        let skip_register_predicates = if self.arch == CpuArchitecture::X86 {
             PredicateBuilder::skip_register_mnemonic(trace_analyzer.get_any_mnemonic(address))
         } else {
             false
