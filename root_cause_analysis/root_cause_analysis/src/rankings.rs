@@ -10,6 +10,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fs::{self, read, File};
+use std::hash::Hash;
+use std::sync::Mutex;
 use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::register::user_regs_struct_arm;
 
@@ -92,7 +94,7 @@ fn deduplicate_ranking(
     let ranking: Vec<usize> = ranking
         .iter()
         .filter(|&id| {
-            let pred = predicates.get(id).unwrap();
+            let pred = &predicates[id];
             func_map
                 .values()
                 .find(|p| p.address == pred.address && p.score == pred.score)
@@ -104,7 +106,7 @@ fn deduplicate_ranking(
     // Create a HashMap to gather all ids per address.
     let mut address_map: HashMap<usize, Vec<usize>> = HashMap::new();
     for id in ranking.iter() {
-        let address = predicates.get(&id).unwrap().address;
+        let address = predicates[id].address;
         address_map
             .entry(address)
             .or_insert_with(Vec::new)
@@ -138,6 +140,7 @@ fn deduplicate_ranking(
     res
 }
 
+// crash path has function granularity
 fn find_most_likely_crash_path(config: &Config, functions: &Vec<usize>) -> Vec<usize> {
     let paths: HashMap<Vec<usize>, u64> =
         glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
@@ -213,7 +216,7 @@ fn get_taken_path(input_path: String, functions: &Vec<usize>) -> Result<Vec<usiz
             // naive way to prevent loops from being on path
             // this just makes the path smaller and therefore calculation faster
             // the filtering step of predicates having to be on path, and only
-            // considering unique predicates woudl also take care of removing
+            // considering unique predicates would also take care of removing
             // loops and stuff
             if !path.contains(&func_addr) {
                 path.push(func_addr);
@@ -237,16 +240,12 @@ fn find_func_for_addr(functions: &Vec<usize>, addr: usize) -> Option<usize> {
 
 fn calc_conditional_probs(
     rankings: &Vec<Vec<usize>>,
-    predicates: &HashMap<usize, SerializedPredicate>,
-    functions: &Vec<usize>,
 ) -> (HashMap<usize, f64>, HashMap<(usize, usize), f64>) {
-    // calculate individual probability of predicate being true for rankings
+    // calculate individual probability for each predicate
     let mut prob = HashMap::new();
-    for full_ranking in rankings.iter() {
-        for ranking in deduplicate_ranking(full_ranking, predicates, functions) {
-            for pred in ranking.iter() {
-                *prob.entry(*pred).or_insert(0.0) += 1.0;
-            }
+    for ranking in rankings.iter() {
+        for pred in ranking.iter() {
+            *prob.entry(*pred).or_insert(0.0) += 1.0;
         }
     }
 
@@ -254,28 +253,37 @@ fn calc_conditional_probs(
         *p /= rankings.len() as f64;
     }
 
-    let mut cond_prob: HashMap<(usize, usize), f64> = HashMap::new();
-    for &i in prob.keys() {
-        for &j in prob.keys() {
-            let key = (i, j);
-            if i == j {
-                cond_prob.insert(key, *prob.get(&i).unwrap());
+    let cond_prob: Mutex<HashMap<(usize, usize), f64>> = Mutex::new(HashMap::new());
+    // calculate conditional probability matrix
+    let keys: Vec<_> = prob.keys().collect();
+    keys.par_iter().for_each(|&&a| {
+        for &b in prob.keys() {
+            let key = (a, b);
+            let mut tmp = 0.0;
+            if a == b {
+                tmp = prob[&a];
+                //cond_prob.insert(key, prob[&a]);
             } else {
-                for full_ranking in rankings.iter() {
-                    let mut cnt = 0.0;
-                    for ranking in deduplicate_ranking(full_ranking, predicates, functions) {
-                        if ranking.contains(&&i) && ranking.contains(&&j) {
-                            cnt += 1.0;
-                        }
-                    }
+                let joint_cnt = rankings
+                    .iter()
+                    .filter(|&ranking| ranking.contains(&a) && ranking.contains(&b))
+                    .count() as f64;
 
-                    let p = prob.get(&i).unwrap();
-                    *cond_prob.entry(key).or_insert(0.0) += cnt / (rankings.len() as f64 * p);
+                // todo: does deduplication create problems here ?
+                let p_a_b = joint_cnt / rankings.len() as f64;
+
+                if prob[&b] == 0.0 {
+                    tmp = 0.0;
+                } else {
+                    tmp = p_a_b / prob[&b];
                 }
             }
+            // Ensure that the shared state is updated in a thread-safe manner.
+            let mut cond_prob = cond_prob.lock().unwrap();
+            cond_prob.insert(key, tmp);
         }
-    }
-    (prob, cond_prob)
+    });
+    (prob, cond_prob.into_inner().unwrap())
 }
 
 pub fn create_compound_rankings(config: &Config) -> Result<()> {
@@ -291,8 +299,8 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         .iter()
         .filter(|sym| sym.st_type() == goblin::elf::sym::STT_FUNC)
         // mask out the thumb bit.
-        //readelf will say function is at e.g. address 0x200fdd but
-        // when executing, it will actually be at 0x200fdc
+        // readelf will say function is at e.g. address 0x200fdd but when executing,
+        // it will actually be at 0x200fdc
         .map(|sym| (sym.st_value & !1) as usize)
         .collect();
 
@@ -306,75 +314,94 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
     let rankings = deserialize_rankings(config);
 
     let path = find_most_likely_crash_path(config, &functions);
-    let mut compound_predicates: HashMap<Vec<usize>, u64> = HashMap::new();
+    let compound_predicates: Mutex<HashMap<Vec<usize>, u64>> = Mutex::new(HashMap::new());
 
-    let (_, cond_probs) = calc_conditional_probs(&rankings, &predicates, &functions);
-
+    let mut deduplicated_rankings = Vec::new();
     for full_ranking in rankings.iter() {
-        if rankings.len() < 2 {
-            continue;
-        }
-
         for ranking in deduplicate_ranking(full_ranking, &predicates, &functions) {
-            let mut preds_on_path: Vec<usize> = ranking
-                .iter()
-                .filter(|&id| {
-                    let addr = predicates.get(id).unwrap().address;
-                    if let Some(func) = find_func_for_addr(&functions, addr) {
-                        path.contains(&func)
-                    } else {
-                        false
-                    }
-                })
-                .map(|&x| x)
-                .collect();
-
-            // identify outliers by iteratively removing the element with the
-            // smallest average conditional probability until all elements have the
-            // same average conditional prob (1 or close to 1) meaning all elements
-            // have a perfect co-occurence
-            loop {
-                let avg_cond_prob_per_predicate: HashMap<usize, f64> = preds_on_path
-                    .iter()
-                    .map(|&p| {
-                        (
-                            p,
-                            preds_on_path
-                                .iter()
-                                .map(|&p2| cond_probs.get(&(p, p2)).unwrap())
-                                .sum::<f64>()
-                                / preds_on_path.len() as f64,
-                        )
-                    })
-                    .collect();
-
-                let avg_cond_prob: f64 = avg_cond_prob_per_predicate.values().sum::<f64>()
-                    / avg_cond_prob_per_predicate.len() as f64;
-
-                let (min_key, min_value) = avg_cond_prob_per_predicate
-                    .iter()
-                    .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-                    .map(|(k, v)| (*k, *v))
-                    .unwrap();
-
-                // e.g. we consider 99.9999987 = 99.9999967
-                if (avg_cond_prob - min_value).abs() > 0.000001 {
-                    preds_on_path.retain(|&x| x != min_key);
-                } else {
-                    break;
-                }
-            }
-
-            // score rankings based on how many of the predicates are on the most likely
-            // crash path
-            // todo: think about the method of scoring based on how many predicates
-            // are on path
-            *compound_predicates
-                .entry(preds_on_path.iter().map(|&val| val).collect())
-                .or_insert(0) += preds_on_path.len() as u64;
-            //.or_insert(0) += 1 as u64;
+            deduplicated_rankings.push(ranking);
         }
     }
+
+    println!(
+        "Calc conditional probs, ranking len: 0x{:x}, deduplicated ranking len: 0x{:x}",
+        rankings.len(),
+        deduplicated_rankings.len()
+    );
+    let (_, cond_probs) = calc_conditional_probs(&deduplicated_rankings);
+
+    println!("Done calculating conditional probs. Creating ranking");
+    deduplicated_rankings.par_iter().for_each(|ranking| {
+        if ranking.len() < 2 {
+            return;
+            //continue;
+        }
+
+        let mut preds_on_path: Vec<usize> = ranking
+            .iter()
+            .filter(|&id| {
+                let addr = predicates.get(id).unwrap().address;
+                if let Some(func) = find_func_for_addr(&functions, addr) {
+                    path.contains(&func)
+                } else {
+                    false
+                }
+            })
+            .map(|&x| x)
+            .collect();
+
+        // identify outliers by iteratively removing the element with the
+        // smallest average conditional probability until all elements have the
+        // same average conditional prob (1 or close to 1) meaning all elements
+        // have a perfect co-occurence
+        loop {
+            // calculate average conditional probability of each predicate on path
+            // to all other predicates on path
+            let avg_cond_prob_per_predicate: HashMap<usize, f64> = preds_on_path
+                .iter()
+                .map(|&p| {
+                    (
+                        p,
+                        preds_on_path
+                            .iter()
+                            .map(|&p2| cond_probs.get(&(p, p2)).unwrap())
+                            .sum::<f64>()
+                            / preds_on_path.len() as f64,
+                    )
+                })
+                .collect();
+
+            // calculate average conditional prob of all predicates to each other
+            let avg_cond_prob: f64 = avg_cond_prob_per_predicate.values().sum::<f64>()
+                / avg_cond_prob_per_predicate.len() as f64;
+
+            // find the predicate with the lowest average conditional prob to other
+            // predicates on path
+            let (min_key, min_value) = avg_cond_prob_per_predicate
+                .iter()
+                .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(k, v)| (*k, *v))
+                .unwrap();
+
+            // if avg conditional prob of predicate is lower than average, remove
+            // e.g. we consider 99.9999 = 99.9998
+            if (avg_cond_prob - min_value).abs() > 0.0001 {
+                preds_on_path.retain(|&x| x != min_key);
+            } else {
+                break;
+            }
+        }
+
+        // score rankings based on how many of the predicates are on the most likely
+        // crash path
+        // todo: think about the method of scoring based on how many predicates
+        // are on path, does this introduce bias ? should you just increase by 1 ?
+        let mut compound_predicates = compound_predicates.lock().unwrap();
+        *compound_predicates
+            .entry(preds_on_path.iter().map(|&val| val).collect())
+            .or_insert(0) += preds_on_path.len() as u64;
+        //.or_insert(0) += 1 as u64;
+    });
 
     // sorts high -> low
     // first count occurence score, then sum of predicate scores
@@ -395,6 +422,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         })
     };
 
+    let compound_predicates = compound_predicates.into_inner().unwrap();
     let mut sorted_entries: Vec<_> = compound_predicates.iter().collect();
     assert!(sorted_entries.len() > 0);
     sorted_entries.sort_by(|a, b| compare_compound(a, b));
@@ -402,6 +430,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
     let top_score = sorted_entries[0].1;
     let amt_with_top_score = sorted_entries.iter().filter(|x| x.1 == top_score).count();
 
+    // todo: remove. only here for debugging
     let top_ten: Vec<(u64, f64, Vec<usize>)> = sorted_entries
         .iter()
         .take(10)
