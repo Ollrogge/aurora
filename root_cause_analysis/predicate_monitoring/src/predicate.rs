@@ -40,7 +40,7 @@ pub enum ValueDestination {
     Address(MemoryLocation),
     // Value is read from memory into reg
     Memory(AccessSize, MemoryLocation),
-    MemoryVal(AccessSize, MemoryLocation, RegId),
+    MemoryVal(AccessSize, MemoryLocation, RegId, Option<RegId>),
     Register(Register),
 }
 
@@ -316,15 +316,6 @@ pub fn convert_predicate_arm(
     // compare: <destination> <compare-type> <value>
     } else if function.contains("reg_val") {
         let value = usize::from_str_radix(&parts[2][2..], 16).expect("failed to parse value");
-        let memory_locations =
-            arm_isn_detail
-                .operands()
-                .into_iter()
-                .filter_map(|op| match op.op_type {
-                    ArmOperandType::Mem(mem) => Some(mem),
-                    _ => None,
-                });
-
         let mut memory_locations = Vec::new();
         let mut source_regs = Vec::new();
 
@@ -347,9 +338,17 @@ pub fn convert_predicate_arm(
                     return Ok(None);
                 }
 
-                // there should only ever be 1 memory location operand and source reg
+                // there should only ever be 1 memory location operand
+                /*
+                if memory_locations.len() > 1 || source_regs.len() > 1 {
+                    println!(
+                        "memory locations or source regs weird: {:?} {:?} {}",
+                        memory_locations, source_regs, predicate
+                    )
+                }
+                */
                 assert!(memory_locations.len() == 1);
-                assert!(source_regs.len() == 1);
+                assert!(source_regs.len() <= 2);
 
                 let memory = MemoryLocation::from_arm_op_mem(memory_locations[0]);
                 let source_reg = source_regs[0];
@@ -362,7 +361,13 @@ pub fn convert_predicate_arm(
 
                 if parts[0] == "memory_value" {
                     // todo: is operand_width always 4 byte ?
-                    ValueDestination::MemoryVal(4, memory, source_reg)
+
+                    // e.g. strd r3, r6, [r7] -> two source registers
+                    if source_regs.len() == 2 {
+                        ValueDestination::MemoryVal(4, memory, source_regs[0], Some(source_regs[1]))
+                    } else {
+                        ValueDestination::MemoryVal(4, memory, source_regs[0], None)
+                    }
                 } else {
                     ValueDestination::Address(memory)
                 }

@@ -89,11 +89,26 @@ impl RootCauseCandidate {
                     // address accessed
                     ValueDestination::Address(ref mem) => mem.address(prev),
                     // value written at address
-                    ValueDestination::MemoryVal(ref access_size, ref mem, ref regid) => {
-                        let val = RegisterArm::from_regid(*regid).unwrap().value(prev);
+                    ValueDestination::MemoryVal(
+                        ref access_size,
+                        ref mem,
+                        ref source_reg1,
+                        ref source_reg2,
+                    ) => {
+                        // strd instruction
+                        let val = if let Some(source_reg2) = source_reg2 {
+                            let val1 =
+                                RegisterArm::from_regid(*source_reg1).unwrap().value(prev) as usize;
+                            let val2 =
+                                RegisterArm::from_regid(*source_reg2).unwrap().value(prev) as usize;
+
+                            (val2 & 0xFFFF_FFFF) << 32 | (val1 & 0xFFFF_FFFF)
+                        } else {
+                            RegisterArm::from_regid(*source_reg1).unwrap().value(prev) as usize
+                        };
                         //println!("Memory write. Val {:#018x}", val);
 
-                        val as usize
+                        val
                     }
                     ValueDestination::Memory(_, _) => {
                         anyhow::bail!("Unexpected ValDestination::Memory for ARM")
@@ -180,7 +195,7 @@ impl RootCauseCandidate {
                             _ => value,
                         }
                     }
-                    ValueDestination::MemoryVal(_, _, _) => {
+                    ValueDestination::MemoryVal(_, _, _, _) => {
                         anyhow::bail!("Unepected ValueDestination::MemoryVal for x86")
                     }
                 };
