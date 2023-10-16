@@ -288,6 +288,11 @@ impl PredicateBuilder {
         selector: &Selector,
         value: usize,
     ) -> Vec<Predicate> {
+        /*
+        for range in trace_analyzer.memory_addresses.0.values() {
+            println!("Range: {:x}-{:x}", range.start, range.end);
+        }
+        */
         let regs = match self.arch {
             CpuArchitecture::ARM => &*REGISTERS_ARM,
             CpuArchitecture::X86 => &*REGISTERS_X86,

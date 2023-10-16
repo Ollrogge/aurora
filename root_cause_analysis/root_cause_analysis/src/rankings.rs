@@ -3,9 +3,12 @@ use crate::config::Config;
 use crate::traces::{deserialize_mnemonics, deserialize_predicates};
 use crate::utils::{glob_paths, read_file, write_file};
 use anyhow::{anyhow, Context, Result};
+use gimli::{DebuggingInformationEntry, EndianSlice, EntriesTree, LittleEndian, UnitOffset};
 use goblin::elf::Elf;
 use itertools::{Itertools, MultiProduct};
+use object::{Object, ObjectSection};
 use rayon::prelude::*;
+use std::borrow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -136,6 +139,23 @@ fn deduplicate_ranking(
         .collect();
 
     res
+}
+
+fn get_crash_loc(config: &Config) -> Result<usize> {
+    let all_paths = glob_paths(format!("{}/crashes/*-full*", config.eval_dir));
+    let path = all_paths.first().unwrap();
+
+    let f = File::open(path).context("open monitor file")?;
+
+    // all register values throughout the whole exeuction of the program
+    let detailed_trace: Vec<Vec<u32>> =
+        bincode::deserialize_from(f).context("bincode deserialize")?;
+
+    let last_reg_state =
+        user_regs_struct_arm::try_from(detailed_trace[detailed_trace.len() - 1].clone())
+            .map_err(|_| anyhow!("unable to get user_regs_struct_arm"))?;
+
+    Ok(last_reg_state.pc as usize)
 }
 
 // crash path has function granularity
@@ -309,6 +329,50 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         .map(|sym| (sym.st_value & !1) as usize)
         .collect();
 
+    /* parse DWARF debug information to find inlined functions and add them to vec */
+    let object = object::File::parse(&*binary)?;
+    let endian = gimli::RunTimeEndian::Little; // Assuming little endian; adjust as needed
+
+    let load_section = |id: gimli::SectionId| -> Result<borrow::Cow<[u8]>, gimli::Error> {
+        match object.section_by_name(id.name()) {
+            Some(ref section) => Ok(section
+                .uncompressed_data()
+                .unwrap_or(borrow::Cow::Borrowed(&[][..]))),
+            None => Ok(borrow::Cow::Borrowed(&[][..])),
+        }
+    };
+
+    // Load all of the sections.
+    let dwarf_cow = gimli::Dwarf::load(&load_section)?;
+
+    // Borrow a `Cow<[u8]>` to create an `EndianSlice`.
+    let borrow_section: &dyn for<'a> Fn(
+        &'a borrow::Cow<[u8]>,
+    ) -> gimli::EndianSlice<'a, gimli::RunTimeEndian> =
+        &|section| gimli::EndianSlice::new(&*section, endian);
+
+    let dwarf = dwarf_cow.borrow(&borrow_section);
+
+    let mut iter = dwarf.units();
+    while let Some(header) = iter.next()? {
+        let unit = dwarf.unit(header)?;
+        let mut entries = unit.entries();
+        while let Some((_, entry)) = entries.next_dfs()? {
+            if entry.tag() == gimli::DW_TAG_subprogram
+                || entry.tag() == gimli::DW_TAG_inlined_subroutine
+            {
+                if let Some(low_pc) = entry.attr_value(gimli::DW_AT_low_pc)? {
+                    match low_pc {
+                        gimli::AttributeValue::Addr(addr) => {
+                            functions.push(addr as usize);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     functions.sort();
 
     let predicates: HashMap<usize, SerializedPredicate> = deserialize_predicates(config)
@@ -456,18 +520,44 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         amt_with_top_score,
     );
 
-    let ret = sorted_entries
+    for (k, v) in compound_predicates.iter() {
+        println!("Score: {}", v);
+        for id in k.iter() {
+            print!("{:x} ", predicates[id].address);
+        }
+
+        println!("")
+    }
+
+    let mut compound_predicates: Vec<Vec<usize>> = sorted_entries
         .into_iter()
         .filter(|x| x.1 == top_score)
         .map(|x| x.0.clone())
         .collect();
 
+    // filter compound_predicates to only include predicates within 5% of the top score
+    for ranking in &mut compound_predicates {
+        let best_score = ranking
+            .iter()
+            .map(|pred_id| predicates[pred_id].score)
+            .max_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+
+        let to_retain: Vec<usize> = ranking
+            .iter()
+            .filter(|&id| predicates[id].score >= best_score * 0.95)
+            .cloned()
+            .collect();
+
+        ranking.retain(|id| to_retain.contains(&id));
+    }
+
     //let ret = vec![sorted_entries[0].0.clone()];
 
     // crash location should be the same no matter how many paths we have found
-    let crashing_loc = paths[0][paths[0].len() - 1];
+    let crashing_loc = get_crash_loc(config)?;
 
-    dumb_compound_rankings(config, ret, crashing_loc, predicates);
+    dumb_compound_rankings(config, compound_predicates, crashing_loc, predicates);
 
     Ok(())
 }
@@ -537,12 +627,14 @@ fn dumb_compound_rankings(
 
         let output = addr2line(config, crash_addr);
         let line = output.splitn(2, ' ').nth(1).unwrap_or("");
+        /*
         content.push(format!(
-            "#{} CRASH LOCATION: {:#018x} -- {}\n",
+            "#{} CRASH FUNCTION: {:#018x} -- {}\n",
             ranking.len(),
             crash_addr,
             line
         ));
+        */
 
         /*
         println!(

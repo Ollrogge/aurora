@@ -22,6 +22,8 @@ anyhow = "*"
 log = "^0.4"
 capstone ="*"
 goblin ="*"
+gimli="*"
+object ="*"
 
 [[bin]]
 name = "rca"
