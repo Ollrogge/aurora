@@ -134,6 +134,7 @@ impl PredicateSynthesizer {
                     Some(reg_index),
                 )
             })
+            .map(|x| Predicate::Simple(x))
             .collect()
     }
 
@@ -143,17 +144,20 @@ impl PredicateSynthesizer {
         trace_analyzer: &TraceAnalyzer,
         selector: &Selector,
         reg_index: Option<usize>,
-    ) -> Vec<Predicate> {
+    ) -> Vec<SimplePredicate> {
+        // get unique vals at address
         let values = trace_analyzer.unique_values_at_address(address, selector, reg_index);
         if values.is_empty() {
             return vec![];
         }
 
+        // search for the value best separating crashing and non crashing
         let mut f: Vec<_> = values
             .par_iter()
             .map(|v| {
                 (
                     v,
+                    // only evaluates reg_val less
                     PredicateSynthesizer::evaluate_value_at_address(
                         address,
                         trace_analyzer,
@@ -171,11 +175,16 @@ impl PredicateSynthesizer {
             address,
             selector,
             reg_index,
+            // value of pred with smallest score for reg_val_less selector
+            // => best score for reg val greater or equal to
             PredicateSynthesizer::arithmetic_mean(*f.first().unwrap().0, &values),
+            // value of pred with greatest score for reg_val_less selector
+            //= best score for pred with reg_val_less selector
             PredicateSynthesizer::arithmetic_mean(*f.last().unwrap().0, &values),
         )
     }
 
+    // some kind of normalization step?
     fn arithmetic_mean(v1: u64, values: &Vec<u64>) -> u64 {
         match values.iter().filter(|v| *v < &v1).max() {
             Some(v2) => ((v1 as f64 + *v2 as f64) / 2.0).round() as u64,
@@ -190,7 +199,7 @@ impl PredicateSynthesizer {
         reg_index: Option<usize>,
         v1: u64,
         v2: u64,
-    ) -> Vec<Predicate> {
+    ) -> Vec<SimplePredicate> {
         let pred_name1 = gen_reg_val_name(
             self.arch,
             reg_index,
@@ -201,14 +210,14 @@ impl PredicateSynthesizer {
             gen_reg_val_name(self.arch, reg_index, selector_val_less_name(selector), v2);
 
         vec![
-            Predicate::new(
+            SimplePredicate::new(
                 &pred_name1,
                 address,
                 selector_val_greater_or_equal(selector),
                 reg_index,
                 Some(v1 as usize),
             ),
-            Predicate::new(
+            SimplePredicate::new(
                 &pred_name2,
                 address,
                 selector_val_less(selector),
@@ -232,7 +241,7 @@ impl PredicateSynthesizer {
             val
         );
 
-        let predicate = Predicate::new(
+        let predicate = SimplePredicate::new(
             &pred_name,
             address,
             selector_val_less(selector),
@@ -247,64 +256,74 @@ impl PredicateSynthesizer {
         )
     }
 
-    pub fn evaluate_predicate_with_reachability2(
-        address: usize,
+    /*
+    fn evaluate_predicate_with_reachability2(
         trace_analyzer: &TraceAnalyzer,
-        predicate: &Predicate,
-    ) -> f64 {
-        // False Negatives: Crashes that the predicate failed to predict
-        let cf = trace_analyzer
-            .crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| !predicate.execute(i))
-            .count() as f64;
+        mut predicates: Vec<Predicate>,
+    ) -> Vec<Predicate> {
+        let mut scores = Vec::new();
 
-        // True Positives: Crashes correctly predicted by the predicate
-        let ct = trace_analyzer
-            .crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| predicate.execute(i))
-            .count() as f64;
+        for predicate in predicates.iter() {
+            let true_and_crash = trace_analyzer
+                .crashes
+                .as_slice()
+                .par_iter()
+                .map(|t| t.instructions.get(&predicate.address))
+                .filter(|i| predicate.execute(i))
+                .count() as f64;
 
-        // False Positives: Non-crashes that the predicate mistakenly predicted as crashes
-        let nf = trace_analyzer
-            .non_crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| predicate.execute(i))
-            .count() as f64;
+            let true_and_both = trace_analyzer
+                .iter_all_traces()
+                .map(|t| t.instructions.get(&predicate.address))
+                .filter(|i| predicate.execute(i))
+                .count() as f64;
 
-        // True Negatives: Non-crashes correctly identified by the predicate
-        let nt = trace_analyzer
-            .non_crashes
-            .as_slice()
-            .par_iter()
-            .filter(|t| t.instructions.get(&address).is_some())
-            .map(|t| t.instructions.get(&predicate.address))
-            .filter(|i| !predicate.execute(i))
-            .count() as f64;
+            let necessity_score = true_and_crash / trace_analyzer.crashes.len() as f64;
+            let sufficiency_score = true_and_crash / true_and_both;
 
-        let theta = 0.5 * (cf / (cf + ct) + nf / (nf + nt));
-        let mut score = 2.0 * (theta - 0.5).abs();
-        if score.is_nan() {
-            println!("NaN ? {}", predicate.score);
-            score = 0.0;
+            scores.push((necessity_score, sufficiency_score));
         }
-        score
-    }
 
+        let min_n = scores
+            .iter()
+            .map(|x| x.0)
+            .min_by(|a, b| a.partial_cmp(&b).unwrap())
+            .unwrap();
+        let max_n = scores
+            .iter()
+            .map(|x| x.0)
+            .max_by(|a, b| a.partial_cmp(&b).unwrap())
+            .unwrap();
+
+        let min_s = scores
+            .iter()
+            .map(|x| x.1)
+            .min_by(|a, b| a.partial_cmp(&b).unwrap())
+            .unwrap();
+        let max_s = scores
+            .iter()
+            .map(|x| x.1)
+            .max_by(|a, b| a.partial_cmp(&b).unwrap())
+            .unwrap();
+
+        for (i, p) in predicates.iter_mut().enumerate() {
+            let norm_necessity = (scores[i].0 - min_n) / (max_n - min_n);
+            let norm_sufficiency = (scores[i].1 - min_s) / (max_s - min_s);
+
+            let res = (norm_necessity.powf(2.0) + norm_sufficiency.powf(2.0)).sqrt();
+
+            p.score = res;
+        }
+
+        predicates
+    }
+    */
+
+    // SimplePredicate since this is a synthesiz step
     pub fn evaluate_predicate_with_reachability(
         address: usize,
         trace_analyzer: &TraceAnalyzer,
-        predicate: &Predicate,
+        predicate: &SimplePredicate,
     ) -> f64 {
         let true_positives = trace_analyzer
             .crashes

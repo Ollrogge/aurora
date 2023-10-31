@@ -6,6 +6,7 @@ use crate::register::{Register64 as RegisterX86, RegisterArm, REGISTERS_ARM, REG
 use crate::trace::Instruction;
 use crate::trace::Selector;
 use crate::trace_analyzer::TraceAnalyzer;
+use std::collections::HashMap;
 
 pub struct PredicateBuilder {
     arch: CpuArchitecture,
@@ -17,13 +18,13 @@ impl PredicateBuilder {
     }
 
     fn gen_visited(address: usize) -> Vec<Predicate> {
-        vec![Predicate::new(
+        vec![Predicate::Simple(SimplePredicate::new(
             "is_visited",
             address,
             is_visited,
             None,
             None,
-        )]
+        ))]
     }
     fn gen_all_edge_from_to_predicates(
         address: usize,
@@ -35,8 +36,9 @@ impl PredicateBuilder {
             .iter()
             .map(|to| {
                 let pred_name = format!("0x{:x} {} 0x{:x}", address, pred_name, to);
-                Predicate::new(&pred_name, address, func, Some(*to), None)
+                SimplePredicate::new(&pred_name, address, func, Some(*to), None)
             })
+            .map(|x| Predicate::Simple(x))
             .collect()
     }
 
@@ -45,12 +47,12 @@ impl PredicateBuilder {
         cfg: &ControlFlowGraph,
         pred_name: &str,
         func: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
-    ) -> Vec<Predicate> {
+    ) -> Vec<SimplePredicate> {
         cfg.get_instruction_successors(address)
             .iter()
             .map(|to| {
                 let pred_name = format!("0x{:x} {} 0x{:x}", address, pred_name, to);
-                Predicate::new(&pred_name, address, func, Some(*to), None)
+                SimplePredicate::new(&pred_name, address, func, Some(*to), None)
             })
             .collect()
     }
@@ -63,7 +65,13 @@ impl PredicateBuilder {
     ) -> Predicate {
         let pred_name = format!("{} {}", pred_name, value);
 
-        Predicate::new(&pred_name, address, func, Some(value), None)
+        Predicate::Simple(SimplePredicate::new(
+            &pred_name,
+            address,
+            func,
+            Some(value),
+            None,
+        ))
     }
 
     pub fn gen_flag_predicates(
@@ -84,14 +92,14 @@ impl PredicateBuilder {
 
         if self.arch == CpuArchitecture::ARM {
             flag_predicates.extend_from_slice(&vec![
-                Predicate::new(
+                SimplePredicate::new(
                     "max_saturation_flag_set",
                     address,
                     max_saturation_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "min_saturation_flag_set",
                     address,
                     min_saturation_flag_set,
@@ -101,72 +109,72 @@ impl PredicateBuilder {
             ])
         } else {
             flag_predicates.extend_from_slice(&vec![
-                Predicate::new(
+                SimplePredicate::new(
                     "max_parity_flag_set",
                     address,
                     max_parity_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "min_parity_flag_set",
                     address,
                     min_parity_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "max_adjust_flag_set",
                     address,
                     max_adjust_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "min_adjust_flag_set",
                     address,
                     min_adjust_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new("max_trap_flag_set", address, max_trap_flag_set, None, None),
-                Predicate::new("min_trap_flag_set", address, min_trap_flag_set, None, None),
-                Predicate::new(
+                SimplePredicate::new("max_trap_flag_set", address, max_trap_flag_set, None, None),
+                SimplePredicate::new("min_trap_flag_set", address, min_trap_flag_set, None, None),
+                SimplePredicate::new(
                     "max_interrupt_flag_set",
                     address,
                     max_interrupt_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "min_interrupt_flag_set",
                     address,
                     min_interrupt_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "max_direction_flag_set",
                     address,
                     max_direction_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "min_direction_flag_set",
                     address,
                     min_direction_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "max_parity_flag_set",
                     address,
                     max_parity_flag_set,
                     None,
                     None,
                 ),
-                Predicate::new(
+                SimplePredicate::new(
                     "min_parity_flag_set",
                     address,
                     min_parity_flag_set,
@@ -177,32 +185,32 @@ impl PredicateBuilder {
         }
 
         flag_predicates.extend_from_slice(&vec![
-            Predicate::new(
+            SimplePredicate::new(
                 "max_carry_flag_set",
                 address,
                 max_carry_flag_set,
                 None,
                 None,
             ),
-            Predicate::new(
+            SimplePredicate::new(
                 "min_carry_flag_set",
                 address,
                 min_carry_flag_set,
                 None,
                 None,
             ),
-            Predicate::new("max_zero_flag_set", address, max_zero_flag_set, None, None),
-            Predicate::new("min_zero_flag_set", address, min_zero_flag_set, None, None),
-            Predicate::new("max_sign_flag_set", address, max_sign_flag_set, None, None),
-            Predicate::new("min_sign_flag_set", address, min_sign_flag_set, None, None),
-            Predicate::new(
+            SimplePredicate::new("max_zero_flag_set", address, max_zero_flag_set, None, None),
+            SimplePredicate::new("min_zero_flag_set", address, min_zero_flag_set, None, None),
+            SimplePredicate::new("max_sign_flag_set", address, max_sign_flag_set, None, None),
+            SimplePredicate::new("min_sign_flag_set", address, min_sign_flag_set, None, None),
+            SimplePredicate::new(
                 "max_overflow_flag_set",
                 address,
                 max_overflow_flag_set,
                 None,
                 None,
             ),
-            Predicate::new(
+            SimplePredicate::new(
                 "min_overflow_flag_set",
                 address,
                 min_overflow_flag_set,
@@ -212,6 +220,9 @@ impl PredicateBuilder {
         ]);
 
         flag_predicates
+            .into_iter()
+            .map(|x| Predicate::Simple(x))
+            .collect()
     }
 
     pub fn gen_cfg_predicates(&self, address: usize, cfg: &ControlFlowGraph) -> Vec<Predicate> {
@@ -335,7 +346,8 @@ impl PredicateBuilder {
                 CpuArchitecture::X86 => *reg_index != (RegisterX86::MemoryAddress as usize - 1),
                 CpuArchitecture::ARM => *reg_index != RegisterArm::MemoryAddress as usize,
             })
-            // ram addresses in registers are too noisy
+            // ram addresses in registers are too noisy, so only create predicates
+            // if value is not in a valid memory region
             .filter(|reg_index| {
                 !trace_analyzer
                     .values_at_address(address, selector, Some(*reg_index))
@@ -355,7 +367,7 @@ impl PredicateBuilder {
                     selector_val_less_name(selector),
                     value as u64,
                 );
-                Predicate::new(
+                SimplePredicate::new(
                     &pred_name,
                     address,
                     selector_val_less(&selector),
@@ -363,6 +375,7 @@ impl PredicateBuilder {
                     Some(value),
                 )
             })
+            .map(|x| Predicate::Simple(x))
             .collect()
     }
 
@@ -430,8 +443,22 @@ impl PredicateBuilder {
         ret
     }
 
+    pub fn gen_composite_reaches(&self, last_address: usize, pred: Predicate) -> Predicate {
+        let name = format!("{} and reaches {:x}", pred.get_name(), last_address);
+
+        // give pred same address as predicate we are dependent on
+        Predicate::Composite(CompositePredicate::new(
+            name.as_str(),
+            pred.get_address(),
+            vec![pred],
+            reaches,
+            None,
+            None,
+        ))
+    }
+
     pub fn gen_predicates(&self, address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
-        let mut ret = vec![];
+        let mut ret: Vec<Predicate> = vec![];
 
         let skip_register_predicates = if self.arch == CpuArchitecture::X86 {
             PredicateBuilder::skip_register_mnemonic(trace_analyzer.get_any_mnemonic(address))
@@ -454,6 +481,26 @@ impl PredicateBuilder {
         if !skip_register_predicates {
             ret.extend(self.gen_flag_predicates(address, &trace_analyzer));
         }
+
+        /*
+        let mut counts = HashMap::new();
+        for crash in trace_analyzer.crashes.iter() {
+            *counts.entry(crash.last_address).or_insert(0) += 1;
+        }
+        let last_address = counts
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(value, _)| value)
+            .unwrap();
+
+        let mut to_add = Vec::new();
+        for pred in ret.iter() {
+            to_add.push(self.gen_composite_reaches(last_address, pred.clone()));
+        }
+        ret.extend(to_add);
+        */
+
+        //ret.extend(self.gen_composite_reaches(last_address, ))
 
         ret
     }

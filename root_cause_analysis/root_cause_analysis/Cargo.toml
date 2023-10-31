@@ -24,6 +24,7 @@ capstone ="*"
 goblin ="*"
 gimli="*"
 object ="*"
+regex = "*"
 
 [[bin]]
 name = "rca"

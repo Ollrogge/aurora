@@ -1,7 +1,7 @@
 use crate::config::{Config, CpuArchitecture, TraceFormat};
 use crate::control_flow_graph::{CFGCollector, ControlFlowGraph};
 use crate::predicate_analysis::PredicateAnalyzer;
-use crate::predicates::{Predicate, SerializedPredicate};
+use crate::predicates::{Predicate, SerializedPredicate, SimplePredicate};
 use crate::trace::{Instruction, Selector, Trace, TraceVec};
 use crate::trace_integrity::TraceIntegrityChecker;
 use glob::glob;
@@ -81,6 +81,7 @@ fn parse_traces(
     config: &Config,
     must_include: Option<HashSet<usize>>,
     blacklist_paths: Option<Vec<String>>,
+    is_crash: bool,
 ) -> TraceVec {
     let pattern = match config.trace_format {
         TraceFormat::JSON => format!("{}/*trace", path),
@@ -102,7 +103,7 @@ fn parse_traces(
         TraceFormat::JSON => TraceVec::from_vec(
             paths
                 .into_par_iter()
-                .map(|s| Trace::from_trace_file(s, config.cpu_architecture))
+                .map(|s| Trace::from_trace_file(s, config.cpu_architecture, is_crash))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -114,7 +115,7 @@ fn parse_traces(
         TraceFormat::ZIP => TraceVec::from_vec(
             paths
                 .into_par_iter()
-                .map(|s| Trace::from_zip_file(s, config.cpu_architecture))
+                .map(|s| Trace::from_zip_file(s, config.cpu_architecture, is_crash))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -126,7 +127,7 @@ fn parse_traces(
         TraceFormat::BIN => TraceVec::from_vec(
             paths
                 .into_par_iter()
-                .map(|s| Trace::from_bin_file(s, config.cpu_architecture))
+                .map(|s| Trace::from_bin_file(s, config.cpu_architecture, is_crash))
                 .take(if config.random_traces() {
                     config.random_traces
                 } else {
@@ -142,7 +143,7 @@ impl TraceAnalyzer {
     pub fn new(config: &Config) -> TraceAnalyzer {
         let crash_blacklist =
             read_crash_blacklist(config.blacklist_crashes(), &config.crash_blacklist_path);
-        let crashes = parse_traces(&config.path_to_crashes, config, None, crash_blacklist);
+        let crashes = parse_traces(&config.path_to_crashes, config, None, crash_blacklist, true);
         let crashing_addresses: Option<HashSet<usize>> = match config.filter_non_crashes {
             true => Some(crashes.iter().map(|t| t.last_address).collect()),
             false => None,
@@ -153,6 +154,7 @@ impl TraceAnalyzer {
             config,
             crashing_addresses,
             None,
+            false,
         );
 
         println!(
@@ -168,6 +170,45 @@ impl TraceAnalyzer {
             cfg: ControlFlowGraph::new(),
             memory_addresses: MemoryAddresses::read_from_file(config),
         };
+
+        let mut counts = HashMap::new();
+        for crash in trace_analyzer.crashes.iter() {
+            *counts.entry(crash.last_address).or_insert(0) += 1;
+        }
+
+        let crash_address = counts
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .map(|(value, _)| value)
+            .unwrap_or(0);
+
+        let mut reached = 0;
+        let mut not_reached = 0;
+        for non_crash in trace_analyzer.non_crashes.iter_mut() {
+            let reaches_crash = non_crash
+                .instructions
+                .values()
+                .find(|x| x.address == crash_address)
+                .is_some();
+
+            if reaches_crash {
+                reached += 1;
+            } else {
+                not_reached += 1;
+            }
+
+            for inst in non_crash.instructions.values_mut() {
+                inst.reaches_crash_address = reaches_crash;
+            }
+        }
+
+        println!("Reached: {}, not reached: {}", reached, not_reached);
+
+        for crash in trace_analyzer.crashes.iter_mut() {
+            for inst in crash.instructions.values_mut() {
+                inst.reaches_crash_address = true;
+            }
+        }
 
         if config.check_traces || config.dump_scores || config.debug_predicate() {
             let mut cfg_collector = CFGCollector::new();
@@ -316,7 +357,7 @@ impl TraceAnalyzer {
             .map(|(_, p)| (p.clone()))
             .collect();
 
-        ret.par_sort_by(|p1, p2| p1.score.partial_cmp(&p2.score).unwrap());
+        ret.par_sort_by(|p1, p2| p1.get_score().partial_cmp(&p2.get_score()).unwrap());
 
         ret
     }
@@ -334,17 +375,17 @@ impl TraceAnalyzer {
         let mut file = File::create(file_name).unwrap();
 
         for predicate in scores.iter() {
-            if filter_scores && predicate.score <= 0.5 {
+            if filter_scores && predicate.get_score() <= 0.5 {
                 continue;
             }
 
             write!(
                 &mut file,
                 "{:#x};{} ({}) -- {}\n",
-                predicate.address,
-                predicate.score,
-                predicate.to_string(),
-                self.get_any_mnemonic(predicate.address),
+                predicate.get_address(),
+                predicate.get_score(),
+                predicate.get_name(),
+                self.get_any_mnemonic(predicate.get_address()),
             )
             .unwrap();
         }
@@ -369,7 +410,7 @@ impl TraceAnalyzer {
     pub fn get_predicates_better_than(&self, min_score: f64) -> Vec<SerializedPredicate> {
         self.address_scores
             .iter()
-            .filter(|(_, p)| p.score > min_score)
+            .filter(|(_, p)| p.get_score() > min_score)
             .map(|(_, p)| p.to_serialzed())
             .collect()
     }
@@ -378,7 +419,7 @@ impl TraceAnalyzer {
         let mut predicates_map = self
             .address_scores
             .iter()
-            .filter(|(_, p)| p.score > min_score)
+            .filter(|(_, p)| p.get_score() > min_score)
             .fold(HashMap::new(), |mut acc, (addr, p)| {
                 acc.entry(addr).or_insert_with(Vec::new).push(p);
                 acc
@@ -403,19 +444,28 @@ impl TraceAnalyzer {
         for preds in predicates_map.values_mut() {
             let mut filtered: HashMap<String, &Predicate> = HashMap::new();
             for pred in preds.iter() {
-                if pred.name.contains("flag") {
-                    let sub = pred.name.split("_").collect::<Vec<&str>>()[1];
+                if pred.get_name().contains("flag") {
+                    // parse which flag
+                    let sub = pred.get_name().split("_").collect::<Vec<&str>>()[1];
                     filtered.entry(sub.to_string()).or_insert(pred);
-                } else if pred.name.contains("less_or_equal") {
-                    let key = format!("{}less_or_equal{}", pred.p1.unwrap(), pred.p2.unwrap());
+                } else if pred.get_name().contains("less_or_equal") {
+                    let key = format!(
+                        "{}less_or_equal{}",
+                        pred.get_p1().unwrap(),
+                        pred.get_p2().unwrap()
+                    );
                     filtered.insert(key, pred);
-                } else if pred.name.contains("greater_or_equal") {
-                    let key = format!("{}greater_or_equal{}", pred.p1.unwrap(), pred.p2.unwrap());
+                } else if pred.get_name().contains("greater_or_equal") {
+                    let key = format!(
+                        "{}greater_or_equal{}",
+                        pred.get_p1().unwrap(),
+                        pred.get_p2().unwrap()
+                    );
                     filtered.insert(key, pred);
-                } else if pred.name.contains("reg_val_less") {
+                } else if pred.get_name().contains("reg_val_less") {
                     match filtered.entry("reg_val_less".to_string()) {
                         Entry::Occupied(mut entry) => {
-                            if pred.p2 < entry.get().p2 {
+                            if pred.get_p2() < entry.get().get_p2() {
                                 entry.insert(pred);
                             }
                         }
@@ -424,7 +474,7 @@ impl TraceAnalyzer {
                         }
                     }
                 } else {
-                    filtered.insert(pred.name.clone(), pred);
+                    filtered.insert(pred.get_name().clone(), pred);
                 }
             }
             filtered_predicates.extend(filtered.values().map(|p| p.to_serialzed()))
@@ -442,14 +492,14 @@ impl TraceAnalyzer {
 
     fn print_scores(scores: &Vec<Predicate>, filter_scores: bool) {
         for predicate in scores.iter() {
-            if filter_scores && predicate.score <= 0.5 {
+            if filter_scores && predicate.get_score() <= 0.5 {
                 continue;
             }
             println!(
                 "{:#x};{} ({})",
-                predicate.address,
-                predicate.score,
-                predicate.to_string()
+                predicate.get_address(),
+                predicate.get_score(),
+                predicate.get_name()
             );
         }
     }

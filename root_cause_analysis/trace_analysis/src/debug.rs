@@ -54,7 +54,7 @@ pub fn dump_trace_info(config: &Config, trace_analyzer: &TraceAnalyzer) {
 }
 
 // todo: do I need this
-pub fn debug_predicate_at_address(address: usize, trace_analyzer: &TraceAnalyzer) {
+pub fn debug_predicate_at_address(address: usize, trace_analyzer: &mut TraceAnalyzer) {
     let predicates = PredicateAnalyzer::evaluate_best_predicates_at_address(
         address,
         trace_analyzer,
@@ -64,9 +64,9 @@ pub fn debug_predicate_at_address(address: usize, trace_analyzer: &TraceAnalyzer
     for predicate in predicates.iter() {
         println!(
             "0x{:x} -- {} -- {}",
-            predicate.address,
-            predicate.to_string(),
-            predicate.score
+            predicate.get_address(),
+            predicate.get_name(),
+            predicate.get_score()
         );
     }
 }

@@ -278,8 +278,8 @@ pub fn convert_predicate_arm(
 ) -> Result<Option<Predicate>> {
     let parts: Vec<_> = predicate.split(' ').collect();
     let function = match parts.len() {
-        1 | 2 => parts[0],
-        3 => parts[1],
+        1 | 2 | 4 | 5 => parts[0],
+        3 | 6 => parts[1],
         _ => unimplemented!(),
     };
 

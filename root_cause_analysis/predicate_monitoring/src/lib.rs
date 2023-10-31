@@ -82,7 +82,6 @@ impl RootCauseCandidate {
 
         let xpsr_flags = XPSR_Flags::from_bits_truncate(cur.xpsr);
         match &self.predicate {
-            // todo: explain the cases with comments
             Predicate::Compare(ref compare) => {
                 let value = match compare.destination {
                     ValueDestination::Register(ref reg) => reg.value(cur),

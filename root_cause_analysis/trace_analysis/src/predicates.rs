@@ -46,17 +46,82 @@ impl SerializedPredicate {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub enum Predicate {
+    Simple(SimplePredicate),
+    Composite(CompositePredicate),
+}
+
+impl Predicate {
+    pub fn execute(&self, instruction_option: &Option<&Instruction>) -> bool {
+        match self {
+            Predicate::Composite(composite) => composite.execute(instruction_option),
+            Predicate::Simple(simple) => simple.execute(instruction_option),
+        }
+    }
+
+    pub fn get_name(&self) -> &String {
+        match self {
+            Predicate::Composite(composite) => &composite.name,
+            Predicate::Simple(simple) => &simple.name,
+        }
+    }
+
+    pub fn get_address(&self) -> usize {
+        match self {
+            Predicate::Composite(composite) => composite.address,
+            Predicate::Simple(simple) => simple.address,
+        }
+    }
+
+    pub fn set_score(&mut self, score: f64) {
+        match self {
+            Predicate::Composite(composite) => composite.score = score,
+            Predicate::Simple(simple) => simple.score = score,
+        }
+    }
+
+    pub fn get_score(&self) -> f64 {
+        match self {
+            Predicate::Composite(composite) => composite.score,
+            Predicate::Simple(simple) => simple.score,
+        }
+    }
+
+    pub fn to_serialzed(&self) -> SerializedPredicate {
+        match self {
+            Predicate::Composite(composite) => composite.to_serialzed(),
+            Predicate::Simple(simple) => simple.to_serialzed(),
+        }
+    }
+
+    pub fn get_p1(&self) -> Option<usize> {
+        match self {
+            Predicate::Composite(composite) => composite.p1,
+            Predicate::Simple(simple) => simple.p1,
+        }
+    }
+
+    pub fn get_p2(&self) -> Option<usize> {
+        match self {
+            Predicate::Composite(composite) => composite.p2,
+            Predicate::Simple(simple) => simple.p2,
+        }
+    }
+}
+
 #[derive(Clone)]
-pub struct Predicate {
+pub struct CompositePredicate {
     pub name: String,
     pub p1: Option<usize>,
     pub p2: Option<usize>,
+    predicates: Vec<Predicate>,
     function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
     pub score: f64,
     pub address: usize,
 }
 
-impl PartialEq for Predicate {
+impl PartialEq for CompositePredicate {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
             && self.p1 == other.p1
@@ -66,15 +131,80 @@ impl PartialEq for Predicate {
     }
 }
 
-impl Predicate {
+impl CompositePredicate {
+    pub fn new(
+        name: &str,
+        address: usize,
+        predicates: Vec<Predicate>,
+        function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
+        p1: Option<usize>,
+        p2: Option<usize>,
+    ) -> CompositePredicate {
+        CompositePredicate {
+            name: name.to_string(),
+            address,
+            p1,
+            p2,
+            predicates,
+            function,
+            score: 0.0,
+        }
+    }
+
+    pub fn to_serialzed(&self) -> SerializedPredicate {
+        SerializedPredicate::new(self.name.to_string(), self.address, self.score)
+    }
+
+    pub fn execute(&self, instruction_option: &Option<&Instruction>) -> bool {
+        match instruction_option {
+            Some(instruction) => {
+                let results: Vec<bool> = self
+                    .predicates
+                    .iter()
+                    .map(|p| p.execute(&Some(instruction)))
+                    .collect();
+
+                results.iter().all(|&x| x) && instruction.reaches_crash_address
+            }
+            None => false,
+        }
+    }
+
+    // currently we assume just one inner predicate
+    pub fn get_inner(&self) -> &Predicate {
+        &self.predicates[0]
+    }
+}
+
+#[derive(Clone)]
+pub struct SimplePredicate {
+    pub name: String,
+    pub p1: Option<usize>,
+    pub p2: Option<usize>,
+    function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
+    pub score: f64,
+    pub address: usize,
+}
+
+impl PartialEq for SimplePredicate {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.p1 == other.p1
+            && self.p2 == other.p2
+            && self.score == other.score
+            && self.address == other.address
+    }
+}
+
+impl SimplePredicate {
     pub fn new(
         name: &str,
         address: usize,
         function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
         p1: Option<usize>,
         p2: Option<usize>,
-    ) -> Predicate {
-        Predicate {
+    ) -> SimplePredicate {
+        SimplePredicate {
             name: name.to_string(),
             address,
             p1,
@@ -82,6 +212,10 @@ impl Predicate {
             function,
             score: 0.0,
         }
+    }
+
+    pub fn gen_empty(address: usize) -> Predicate {
+        Predicate::Simple(SimplePredicate::new("empty", address, empty, None, None))
     }
 
     pub fn to_serialzed(&self) -> SerializedPredicate {
@@ -95,10 +229,6 @@ impl Predicate {
         }
     }
 
-    pub fn gen_empty(address: usize) -> Predicate {
-        Predicate::new("empty", address, empty, None, None)
-    }
-
     pub fn to_string(&self) -> String {
         format!("{}", self.name)
     }
@@ -110,6 +240,10 @@ pub fn empty(_: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
 
 pub fn is_visited(_: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
     true
+}
+
+pub fn reaches(inst: &Instruction, _: Option<usize>, _: Option<usize>) -> bool {
+    inst.reaches_crash_address
 }
 
 pub fn selector_val_less_name(selector: &Selector) -> String {

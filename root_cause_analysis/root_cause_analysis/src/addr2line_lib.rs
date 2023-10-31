@@ -22,7 +22,6 @@ pub fn addr2line(config: &Config, address: usize) -> String {
         CpuArchitecture::ARM => "arm-none-eabi-addr2line",
     };
 
-    // TODO: arm-none-eabi-addr2line -e ./tests_usbus_hid.elf -a 0x576
     let output = Command::new(command)
         .args(args)
         .output()

@@ -112,6 +112,9 @@ pub struct Instruction {
     pub registers_max: Registers,
     pub successors: Vec<Successor>,
     pub arch: CpuArchitecture,
+    // last address in trace this instruction belongs to
+    pub reaches_crash_address: bool,
+    pub belongs_to_crash: bool,
 }
 
 impl Instruction {
@@ -199,7 +202,7 @@ impl SerializedInstruction {
         (registers_min, registers_max, registers_last)
     }
 
-    pub fn to_instruction(&self, arch: CpuArchitecture) -> Instruction {
+    pub fn to_instruction(&self, arch: CpuArchitecture, belongs_to_crash: bool) -> Instruction {
         let (registers_min, registers_max, _) = self.add_mem_to_registers(arch);
 
         Instruction {
@@ -209,6 +212,8 @@ impl SerializedInstruction {
             registers_max,
             successors: vec![],
             arch: arch,
+            reaches_crash_address: false,
+            belongs_to_crash: belongs_to_crash,
         }
     }
 }
@@ -253,11 +258,16 @@ pub struct SerializedTrace {
 }
 
 impl SerializedTrace {
-    pub fn to_trace(name: String, serialized: SerializedTrace, arch: CpuArchitecture) -> Trace {
+    pub fn to_trace(
+        name: String,
+        serialized: SerializedTrace,
+        arch: CpuArchitecture,
+        is_crash: bool,
+    ) -> Trace {
         let mut instructions: HashMap<usize, Instruction> = serialized
             .instructions
-            .into_iter()
-            .map(|instr| (instr.address, instr.to_instruction(arch)))
+            .iter()
+            .map(|instr| (instr.address, instr.to_instruction(arch, is_crash)))
             .collect();
         for edge in &serialized.edges {
             if let Some(entry) = instructions.get_mut(&edge.from) {
@@ -307,13 +317,13 @@ pub struct Trace {
 }
 
 impl Trace {
-    pub fn from_trace_file(file_path: String, arch: CpuArchitecture) -> Trace {
+    pub fn from_trace_file(file_path: String, arch: CpuArchitecture, is_crash: bool) -> Trace {
         let content =
             fs::read_to_string(&file_path).expect(&format!("File {} not found!", &file_path));
-        Trace::from_file(file_path, content, arch)
+        Trace::from_file(file_path, content, arch, is_crash)
     }
 
-    pub fn from_zip_file(file_path: String, arch: CpuArchitecture) -> Trace {
+    pub fn from_zip_file(file_path: String, arch: CpuArchitecture, is_crash: bool) -> Trace {
         let zip_file =
             fs::File::open(&file_path).expect(&format!("Could not open file {}", &file_path));
         let mut zip_archive = zip::ZipArchive::new(zip_file)
@@ -327,19 +337,24 @@ impl Trace {
             .read_to_string(&mut trace_content)
             .expect(&format!("Could not read unzipped file {}", trace_file_path));
 
-        Trace::from_file(trace_file_path, trace_content, arch)
+        Trace::from_file(trace_file_path, trace_content, arch, is_crash)
     }
 
-    fn from_file(file_path: String, content: String, arch: CpuArchitecture) -> Trace {
+    fn from_file(
+        file_path: String,
+        content: String,
+        arch: CpuArchitecture,
+        is_crash: bool,
+    ) -> Trace {
         let serialized_trace: SerializedTrace = serde_json::from_str(&content)
             .expect(&format!("Could not deserialize file {}", &file_path));
-        SerializedTrace::to_trace(file_path, serialized_trace, arch)
+        SerializedTrace::to_trace(file_path, serialized_trace, arch, is_crash)
     }
 
-    pub fn from_bin_file(file_path: String, arch: CpuArchitecture) -> Trace {
+    pub fn from_bin_file(file_path: String, arch: CpuArchitecture, is_crash: bool) -> Trace {
         let data = fs::read(&file_path).expect(&format!("Unable to read bin file: {}", file_path));
         let serialized_trace: SerializedTrace = bincode::deserialize(&data).unwrap();
-        SerializedTrace::to_trace(file_path, serialized_trace, arch)
+        SerializedTrace::to_trace(file_path, serialized_trace, arch, is_crash)
     }
 
     pub fn visited_addresses(&self) -> HashSet<usize> {
@@ -379,6 +394,10 @@ impl TraceVec {
 
     pub fn iter(&self) -> impl Iterator<Item = &Trace> {
         self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Trace> {
+        self.0.iter_mut()
     }
 
     pub fn as_slice(&self) -> &[Trace] {

@@ -8,7 +8,7 @@ use trace_analysis::trace_analyzer::TraceAnalyzer;
 fn main() {
     let config = Config::from_args();
 
-    let trace_analyzer = TraceAnalyzer::new(&config);
+    let mut trace_analyzer = TraceAnalyzer::new(&config);
 
     if config.dump_traces {
         println!("dumping traces");
@@ -30,7 +30,7 @@ fn main() {
             "dumping predicate at address 0x{:x}",
             config.predicate_address
         );
-        debug_predicate_at_address(config.predicate_address, &trace_analyzer);
+        debug_predicate_at_address(config.predicate_address, &mut trace_analyzer);
     }
 
     if config.dump_scores {

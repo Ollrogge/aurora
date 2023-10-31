@@ -8,15 +8,64 @@ use goblin::elf::Elf;
 use itertools::{Itertools, MultiProduct};
 use object::{Object, ObjectSection};
 use rayon::prelude::*;
-use std::borrow;
+use regex::Regex;
+use std::borrow::{self, BorrowMut};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fs::{self, read, File};
 use std::hash::Hash;
+use std::ops::Range;
 use std::sync::Mutex;
 use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::register::{user_regs_struct_arm, RegisterArm};
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+enum FunctionType {
+    Contigious,
+    Range,
+}
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+struct Function {
+    pub typ: FunctionType,
+    pub ranges: Vec<Range<usize>>,
+}
+
+impl Function {
+    pub fn new(typ: FunctionType, ranges: Vec<Range<usize>>) -> Function {
+        Function { typ, ranges }
+    }
+
+    pub fn contains(&self, address: usize) -> bool {
+        for range in self.ranges.iter() {
+            if range.contains(&address) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    pub fn is_more_specific_than(&self, addr: usize, other: &Function) -> Result<bool> {
+        let closest_me = self
+            .ranges
+            .iter()
+            .map(|r| r.start)
+            .filter(|start| addr - start > 0)
+            .max()
+            .context("Error finding best range start")?;
+
+        let closest_other = other
+            .ranges
+            .iter()
+            .map(|r| r.start)
+            .filter(|start| addr - start > 0)
+            .max()
+            .context("Error finding best range start")?;
+
+        Ok(closest_me > closest_other)
+    }
+}
 
 pub fn trunc_score(score: f64) -> f64 {
     (score * 100.0).trunc() as f64
@@ -75,17 +124,24 @@ fn rank_path_level(val: usize, rank: &Vec<usize>) -> f64 {
 fn deduplicate_ranking(
     ranking: &Vec<usize>,
     predicates: &HashMap<usize, SerializedPredicate>,
-    functions: &Vec<usize>,
+    functions: &Vec<Function>,
     path_ranks: &HashMap<usize, f64>,
 ) -> Vec<Vec<usize>> {
     // filter ranking to only include best predicates per function, if multiple predicates
     // with same score, then all are included
-    let mut func_map: HashMap<usize, &SerializedPredicate> = HashMap::new();
+    let mut func_map: HashMap<Function, &SerializedPredicate> = HashMap::new();
     // order of predicates executed by address
     for id in ranking.iter() {
         let pred = predicates.get(id).unwrap();
         // find closest function to address
-        let func_addr = find_func_for_addr(functions, pred.address).unwrap();
+        let func_addr = find_func_for_addr(functions, pred.address);
+
+        if func_addr.is_none() {
+            println!("Address is none?: {:x}", pred.address);
+            panic!();
+        }
+
+        let func_addr = func_addr.unwrap();
 
         // update entry if predicate with better score found inside function
         let current_pred = func_map.entry(func_addr).or_insert_with(|| pred);
@@ -100,10 +156,10 @@ fn deduplicate_ranking(
         .iter()
         .filter(|&id| {
             let pred = &predicates[id];
-            let func_addr = find_func_for_addr(functions, pred.address).unwrap();
+            let func = find_func_for_addr(functions, pred.address).unwrap();
             let path_rank = path_ranks[&pred.id];
-            func_map.iter().any(|(&top_func_addr, top_pred)| {
-                top_func_addr == func_addr
+            func_map.iter().any(|(top_func, top_pred)| {
+                *top_func == func
                     && pred.score == top_pred.score
                     && path_rank == path_ranks[&top_pred.id]
             })
@@ -159,8 +215,8 @@ fn get_crash_loc(config: &Config) -> Result<usize> {
 }
 
 // crash path has function granularity
-fn find_most_likely_crash_paths(config: &Config, functions: &Vec<usize>) -> Vec<Vec<usize>> {
-    let paths: HashMap<Vec<usize>, u64> =
+fn find_most_likely_crash_paths(config: &Config, functions: &Vec<Function>) -> Vec<Vec<Function>> {
+    let paths: HashMap<Vec<Function>, u64> =
         glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
             .into_par_iter()
             .filter_map(|path| match get_taken_path(path, functions) {
@@ -190,7 +246,7 @@ fn find_most_likely_crash_paths(config: &Config, functions: &Vec<usize>) -> Vec<
     paths.sort_by(|a, b| b.1.cmp(&a.1));
     let top_score = paths[0].1;
 
-    let paths: Vec<(Vec<usize>, u64)> = paths
+    let paths: Vec<(Vec<Function>, u64)> = paths
         .into_iter()
         .filter(|(_, score)| *score == top_score)
         .collect();
@@ -206,7 +262,7 @@ fn find_most_likely_crash_paths(config: &Config, functions: &Vec<usize>) -> Vec<
     paths.into_iter().map(|(path, _)| path).collect()
 }
 
-fn get_taken_path(input_path: String, functions: &Vec<usize>) -> Result<Vec<usize>> {
+fn get_taken_path(input_path: String, functions: &Vec<Function>) -> Result<Vec<Function>> {
     let f = File::open(input_path).context("open monitor file")?;
 
     // all register values throughout the whole exeuction of the program
@@ -221,10 +277,10 @@ fn get_taken_path(input_path: String, functions: &Vec<usize>) -> Result<Vec<usiz
         })
         .collect();
 
-    let mut regs_arr = regs_arr?;
+    let regs_arr = regs_arr?;
 
     // reverse the trace since we are interested in functions executed right before crash
-    regs_arr.reverse();
+    //regs_arr.reverse();
 
     let mut path = Vec::new();
     // this approach does not consider recursion, but ig it doesn't matter
@@ -235,33 +291,90 @@ fn get_taken_path(input_path: String, functions: &Vec<usize>) -> Result<Vec<usiz
             continue;
         }
 
-        let func_addr = find_func_for_addr(functions, regs.pc as usize);
+        let func = find_func_for_addr(functions, regs.pc as usize);
 
-        if let Some(func_addr) = func_addr {
+        if let Some(func) = func {
             // naive way to prevent loops from being on path
             // this just makes the path smaller and therefore calculation faster
             // the filtering step of predicates having to be on path, and only
             // considering unique predicates would also take care of removing
             // loops and stuff
-            if !path.contains(&func_addr) {
-                path.push(func_addr);
+            if !path.contains(&func) {
+                path.push(func);
             }
         }
     }
 
     // reverse again to show first executed -> last executed
-    path.reverse();
+    //path.reverse();
 
     Ok(path)
 }
 
-fn find_func_for_addr(functions: &Vec<usize>, addr: usize) -> Option<usize> {
+/*
+fn find_func_for_addr(functions: &Vec<Range<usize>>, addr: usize) -> Option<usize> {
     match functions.binary_search_by(|func_addr| func_addr.cmp(&addr)) {
         Ok(index) => Some(functions[index]), // The address is a function start
         Err(0) => None,                      // The address is before the first function
         Err(index) => Some(functions[index - 1]),
     }
 }
+*/
+
+// find the correct function for an address, considering inlining
+// e.g. if func2 is inlined in func1, then this function will return func1 for
+// an address contained within the range on func1, even though this is also
+// contained within the range of func2
+fn find_func_for_addr(functions: &Vec<Function>, addr: usize) -> Option<Function> {
+    let mut best_candidate: Option<Function> = None;
+    for func in functions.iter() {
+        if !func.contains(addr) {
+            continue;
+        }
+        match best_candidate {
+            Some(ref best) => {
+                if func.is_more_specific_than(addr, &best).unwrap_or(false) {
+                    best_candidate = Some(func.clone());
+                }
+            }
+            None => best_candidate = Some(func.clone()),
+        }
+    }
+
+    best_candidate
+}
+
+/*
+// since we are considering inlined functions, functions can be contained within
+// other functions. Therefore we are using ranges rather than just start address
+fn find_func_for_addr(functions: &Vec<Range<usize>>, addr: usize) -> Option<Range<usize>> {
+    let mut candidate: Option<Range<usize>> = None;
+
+    // Use binary search to find a range that might contain the address.
+    match functions.binary_search_by(|func_range| func_range.start.cmp(&addr)) {
+        Ok(index) => {
+            // The address is a function start.
+            candidate = Some(functions[index].clone());
+        }
+        Err(0) => {
+            // The address is before the first function.
+            return None;
+        }
+        Err(index) => {
+            // From this position, scan leftward until we have found a range
+            // containing addr
+            for i in (0..index).rev() {
+                if functions[i].contains(&addr) {
+                    candidate = Some(functions[i].clone());
+                    break;
+                }
+            }
+        }
+    }
+
+    candidate
+}
+*/
 
 fn calc_conditional_probs(
     rankings: &Vec<Vec<usize>>,
@@ -311,7 +424,7 @@ fn calc_conditional_probs(
     (prob, cond_prob.into_inner().unwrap())
 }
 
-pub fn create_compound_rankings(config: &Config) -> Result<()> {
+fn get_functions(config: &Config) -> Result<Vec<Function>> {
     let binary_path = glob_paths(format!("{}/*_trace", config.eval_dir))
         .pop()
         .expect("Unable to find binary for compound ranking");
@@ -319,14 +432,19 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
     let binary = fs::read(binary_path)?;
     let elf = Elf::parse(&binary).expect("Failed to parse elf");
 
-    let mut functions: Vec<usize> = elf
+    let mut functions: HashSet<Function> = elf
         .syms
         .iter()
         .filter(|sym| sym.st_type() == goblin::elf::sym::STT_FUNC)
         // mask out the thumb bit.
         // readelf will say function is at e.g. address 0x200fdd but when executing,
         // it will actually be at 0x200fdc
-        .map(|sym| (sym.st_value & !1) as usize)
+        .map(|sym| {
+            let start = (sym.st_value & !1) as usize;
+            let end = start + sym.st_size as usize;
+
+            Function::new(FunctionType::Contigious, vec![Range { start, end }])
+        })
         .collect();
 
     /* parse DWARF debug information to find inlined functions and add them to vec */
@@ -361,19 +479,147 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
             if entry.tag() == gimli::DW_TAG_subprogram
                 || entry.tag() == gimli::DW_TAG_inlined_subroutine
             {
-                if let Some(low_pc) = entry.attr_value(gimli::DW_AT_low_pc)? {
-                    match low_pc {
-                        gimli::AttributeValue::Addr(addr) => {
-                            functions.push(addr as usize);
-                        }
-                        _ => {}
+                if let Some(gimli::AttributeValue::Addr(low_addr)) =
+                    entry.attr_value(gimli::DW_AT_low_pc)?
+                {
+                    let start_addr = (low_addr & !1) as usize;
+
+                    if let Some(high_value) = entry.attr_value(gimli::DW_AT_high_pc)? {
+                        let high_addr = match high_value {
+                            gimli::AttributeValue::Addr(addr) => addr as usize, // high_pc is an absolute address
+                            gimli::AttributeValue::Udata(offset) => start_addr + offset as usize, // high_pc is an offset from low_pc
+                            _ => continue, // Unexpected type for high_pc; skip this entry
+                        };
+
+                        let end_addr = high_addr & !1;
+
+                        let range = Range {
+                            start: start_addr,
+                            end: end_addr,
+                        };
+
+                        let func = Function::new(FunctionType::Contigious, vec![range]);
+
+                        functions.insert(func);
                     }
+                } else if let Some(gimli::AttributeValue::RangeListsRef(range_list_offset)) =
+                    entry.attr_value(gimli::DW_AT_ranges)?
+                {
+                    let offset = gimli::RangeListsOffset(range_list_offset.0);
+                    // Here, you'll need to fetch the actual ranges from the `.debug_ranges` section
+                    let mut range_list = dwarf.ranges(&unit, offset)?;
+                    let mut ranges = vec![];
+                    while let Some(range) = range_list.next()? {
+                        if range.begin != 0 && range.end != 0 {
+                            let start_addr = (range.begin & !1) as usize;
+                            let end_addr = (range.end & !1) as usize;
+
+                            let range = Range {
+                                start: start_addr,
+                                end: end_addr,
+                            };
+
+                            ranges.push(range);
+                        }
+                    }
+
+                    let func = Function::new(FunctionType::Range, ranges);
+                    functions.insert(func);
                 }
             }
         }
     }
 
-    functions.sort();
+    Ok(functions.into_iter().collect())
+}
+
+struct CompoundPredicate {
+    data: Vec<(Function, Vec<SerializedPredicate>)>,
+}
+
+impl CompoundPredicate {
+    pub fn new() -> CompoundPredicate {
+        CompoundPredicate { data: Vec::new() }
+    }
+
+    pub fn add_entry(&mut self, function: Function, predicates: Vec<SerializedPredicate>) {
+        self.data.push((function, predicates));
+    }
+
+    pub fn filter_data(&mut self, config: &Config) {
+        let best_score = self
+            .data
+            .iter()
+            .flat_map(|v| &v.1)
+            .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
+            .unwrap()
+            .score;
+
+        for (_, preds) in self.data.iter_mut() {
+            preds.retain(|pred| pred.score >= best_score * 0.95);
+
+            // heuristic: .h files only contain very small utility funcs. Less likely to contain bug
+            /*
+            preds.retain(|pred| {
+                let mnemonic = addr2line(config, pred.address);
+                !mnemonic.contains(".h:")
+            })
+            */
+        }
+
+        // another heuristic.
+        self.data.retain(|(_, pred)| pred.len() >= 2);
+    }
+
+    pub fn dumb_data(&self, config: &Config, ranking_number: usize) {
+        let mut content = Vec::new();
+        let mnemonics = deserialize_mnemonics(config);
+        let re = Regex::new(r": (.+?) at (.+?):(\d+)").unwrap();
+        for (num, (func, preds)) in self.data.iter().enumerate() {
+            let info = addr2line(config, func.ranges[0].start);
+            //println!("Info: {}", info);
+
+            let caps = match re.captures(&info) {
+                Some(caps) => caps,
+                None => {
+                    println!("dumb data: info capture failed for: {}", info);
+                    continue;
+                }
+            };
+
+            let function_name = caps.get(1).unwrap().as_str();
+            let file_name = caps.get(2).unwrap().as_str();
+
+            content.push(format!("\n#{}. {} in  {}\n", num, function_name, file_name));
+            content.push(format!("{}\n", "-".repeat(0x20)));
+
+            for (i, pred) in preds.iter().take(3).enumerate() {
+                let info = addr2line(config, pred.address);
+                let caps = re.captures(&info).unwrap();
+
+                let file = caps.get(2).unwrap().as_str();
+                let offset = caps.get(3).unwrap().as_str();
+                content.push(format!(
+                    "#{}. {} -- {} -- {}:{}\n",
+                    i,
+                    pred.to_string(),
+                    mnemonics[&pred.address],
+                    file,
+                    offset
+                ));
+            }
+        }
+
+        let fp = format!(
+            "{}/ranked_compound_predicates{}.txt",
+            config.eval_dir, ranking_number
+        );
+        write_file(&fp, content.into_iter().collect());
+    }
+}
+
+pub fn create_compound_rankings(config: &Config) -> Result<()> {
+    let functions = get_functions(config).context("Error getting functions")?;
 
     let predicates: HashMap<usize, SerializedPredicate> = deserialize_predicates(config)
         .into_iter()
@@ -382,14 +628,94 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
 
     let rankings = deserialize_rankings(config);
 
+    let path_ranks: HashMap<usize, f64> = predicates
+        .keys()
+        .map(|&id| (id, path_rank(id, &rankings)))
+        .collect();
+
+    let mut paths: HashMap<Vec<Function>, u64> = HashMap::new();
+    let (_, cond_probs) = calc_conditional_probs(&rankings);
+
+    for ranking in rankings {
+        let funcs = ranking.iter().fold(Vec::new(), |mut acc, pred_id| {
+            let address = predicates[pred_id].address;
+            let function = find_func_for_addr(&functions, address).unwrap();
+            if !acc.contains(&function) {
+                acc.push(function)
+            }
+            acc
+        });
+
+        *paths.entry(funcs).or_insert(0) += 1;
+    }
+
+    let paths: Vec<(&Vec<Function>, &u64)> = paths.iter().sorted_by(|a, b| b.1.cmp(a.1)).collect();
+    let best_score = *paths[0].1;
+
+    let paths: Vec<&Vec<Function>> = paths
+        .iter()
+        .filter(|(_, &score)| score == best_score)
+        .map(|(path, _)| *path)
+        .collect();
+
+    println!(
+        "Amount of paths found: {}, score: {}",
+        paths.len(),
+        best_score
+    );
+
+    for (i, best_path) in paths.iter().enumerate() {
+        let mut compound_predicate = CompoundPredicate::new();
+
+        for func in best_path.iter() {
+            let mut preds: Vec<&SerializedPredicate> = predicates
+                .values()
+                .filter(|pred| find_func_for_addr(&functions, pred.address).unwrap() == *func)
+                .collect();
+
+            preds.sort_by(|a, b| {
+                // sort score descending, path_rank ascending
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap()
+                    .then(path_ranks[&a.id].partial_cmp(&path_ranks[&b.id]).unwrap())
+            });
+
+            let top_pred = preds[0];
+
+            // only keep predicates that have a conditional prob of 1 with the
+            // best predicate of this function which was used to determine the
+            // crash path
+            preds.retain(|pred| {
+                let key = (top_pred.id, pred.id);
+                cond_probs.contains_key(&key) && cond_probs[&key] == 1.0
+            });
+
+            compound_predicate.add_entry(
+                func.clone(),
+                preds.iter().map(|&pred| pred.clone()).collect(),
+            );
+        }
+
+        compound_predicate.filter_data(config);
+        compound_predicate.dumb_data(config, i);
+    }
+
+    Ok(())
+}
+
+pub fn create_compound_rankings2(config: &Config) -> Result<()> {
+    let functions = get_functions(config).context("Error getting functions")?;
+
+    let predicates: HashMap<usize, SerializedPredicate> = deserialize_predicates(config)
+        .into_iter()
+        .map(|p| (p.id, p))
+        .collect();
+
+    let mut rankings = deserialize_rankings(config);
+
     let paths = find_most_likely_crash_paths(config, &functions);
     let compound_predicates: Mutex<HashMap<Vec<usize>, u64>> = Mutex::new(HashMap::new());
-
-    /*
-    for x in paths[0].iter() {
-        println!("{:x}", x);
-    }
-    */
 
     let path_ranks: HashMap<usize, f64> = predicates
         .keys()
@@ -435,6 +761,7 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
             // smallest average conditional probability until all elements have the
             // same average conditional prob (1 or close to 1) meaning all elements
             // have a perfect co-occurence
+            /*
             loop {
                 // calculate average conditional probability of each predicate on path
                 // to all other predicates on path
@@ -466,14 +793,16 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
 
                 // if avg conditional prob of predicate is lower than average, remove
                 // e.g. we consider 99.9999 == 99.9998
-                if (avg_cond_prob - min_value).abs() > 0.0001 {
+                if (avg_cond_prob - min_value).abs() > 0.1 {
+                    println!("Retain: {:x} {}", predicates[&min_key].address, min_value);
                     preds_on_path.retain(|&x| x != min_key);
                 } else {
-                    assert!((avg_cond_prob - 1.0).abs() < 0.0001);
+                    assert!((avg_cond_prob - 1.0).abs() < 0.1);
                     //println!("Avg conditional prob: {}", avg_cond_prob);
                     break;
                 }
             }
+            */
 
             // score rankings based on how many of the predicates are on the most likely
             // crash path
@@ -482,8 +811,8 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
             let mut compound_predicates = compound_predicates.lock().unwrap();
             *compound_predicates
                 .entry(preds_on_path.iter().map(|&val| val).collect())
-                .or_insert(0) += preds_on_path.len() as u64;
-            //.or_insert(0) += 1 as u64;
+                //.or_insert(0) += preds_on_path.len() as u64;
+                .or_insert(0) += 1 as u64;
         });
     }
 
@@ -543,13 +872,17 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
             .max_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        let to_retain: Vec<usize> = ranking
-            .iter()
-            .filter(|&id| predicates[id].score >= best_score * 0.95)
-            .cloned()
-            .collect();
+        ranking.retain(|id| predicates[id].score >= best_score * 0.95);
+    }
 
-        ranking.retain(|id| to_retain.contains(&id));
+    // heuristic: filter out predicates which are inside .h files as these are
+    // very small and most likely don't contain the root cause
+    for ranking in compound_predicates.iter_mut() {
+        ranking.retain(|&pred_id| {
+            let pred = &predicates[&pred_id];
+            let mnemonic = addr2line(config, pred.address);
+            !mnemonic.contains(".h:")
+        });
     }
 
     //let ret = vec![sorted_entries[0].0.clone()];
@@ -604,14 +937,14 @@ fn dumb_compound_rankings(
             //let func_addr = find_func_for_addr(&functions, pred.address).unwrap();
             let mnemonic = &mnemonics[&pred.address];
             let output = addr2line(config, pred.address);
-            let line = output.splitn(2, ' ').nth(1).unwrap_or("");
+            //let line = output.splitn(2, ' ').nth(1).unwrap_or("");
 
             content.push(format!(
                 "#{} -- {} -- {} -- {}\n",
                 idx,
                 pred.to_string(),
                 mnemonic,
-                line
+                output
             ));
 
             /*
@@ -625,9 +958,9 @@ fn dumb_compound_rankings(
             */
         }
 
+        /*
         let output = addr2line(config, crash_addr);
         let line = output.splitn(2, ' ').nth(1).unwrap_or("");
-        /*
         content.push(format!(
             "#{} CRASH FUNCTION: {:#018x} -- {}\n",
             ranking.len(),
