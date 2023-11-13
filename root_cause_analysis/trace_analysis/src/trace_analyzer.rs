@@ -226,7 +226,7 @@ impl TraceAnalyzer {
 
         if config.dump_scores {
             println!("calculating scores");
-            trace_analyzer.fill_address_scores(config.cpu_architecture);
+            trace_analyzer.fill_address_scores(config);
         }
 
         trace_analyzer
@@ -246,12 +246,12 @@ impl TraceAnalyzer {
         self.cfg = cfg_collector.construct_graph();
     }
 
-    fn fill_address_scores(&mut self, arch: CpuArchitecture) {
+    fn fill_address_scores(&mut self, config: &Config) {
         let addresses = self.crash_non_crash_intersection();
         self.address_scores = addresses
             .into_par_iter()
             .flat_map(|address| {
-                PredicateAnalyzer::evaluate_best_predicates_at_address(address, self, arch)
+                PredicateAnalyzer::evaluate_best_predicates_at_address(address, self, config)
                     .into_iter()
                     .map(|p| (address, p))
                     .collect::<Vec<(usize, Predicate)>>()
@@ -398,7 +398,7 @@ impl TraceAnalyzer {
     }
 
     fn dump_for_serialization(config: &Config, scores: &Vec<Predicate>) {
-        let scores: Vec<_> = scores.iter().map(|p| p.to_serialzed()).collect();
+        let scores: Vec<_> = scores.iter().map(|p| p.to_serialized(config)).collect();
         let serialized_string = serde_json::to_string(&scores).unwrap();
 
         let file_path = format!("{}/scores_linear_serialized.json", config.output_directory);
@@ -407,86 +407,22 @@ impl TraceAnalyzer {
             .expect(&format!("Could not write file {}", file_path));
     }
 
-    pub fn get_predicates_better_than(&self, min_score: f64) -> Vec<SerializedPredicate> {
+    pub fn get_predicates_better_than(
+        &self,
+        min_score: f64,
+        config: &Config,
+    ) -> Vec<SerializedPredicate> {
         self.address_scores
             .iter()
             .filter(|(_, p)| p.get_score() > min_score)
-            .map(|(_, p)| p.to_serialzed())
+            .map(|(_, p)| p.to_serialized_with_func_name(config))
             .collect()
     }
 
-    pub fn get_predicates_better_than_filter(&self, min_score: f64) -> Vec<SerializedPredicate> {
-        let mut predicates_map = self
-            .address_scores
-            .iter()
-            .filter(|(_, p)| p.get_score() > min_score)
-            .fold(HashMap::new(), |mut acc, (addr, p)| {
-                acc.entry(addr).or_insert_with(Vec::new).push(p);
-                acc
-            });
-
-        /*
-        // same meaning
-        0x000000000020e12a -- r4 max_reg_val_greater_or_equal 0x0 -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8720885577887211) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
-        0x000000000020e12a -- r4 min_reg_val_greater_or_equal 0x0 -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8729085029311009) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
-
-        // reg_val less 0xfff is sufficient
-        0x000000000020e12a -- r4 max_reg_val_less 0xffffffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8737284480734812) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
-        0x000000000020e12a -- r4 max_reg_val_less 0xffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.874548393215861) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
-        0x000000000020e12a -- r4 min_reg_val_less 0xffffffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.875368338358241) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
-        0x000000000020e12a -- r4 min_reg_val_less 0xffff -- 0.9979423868312758 -- mov r4, r2 (path rank: 0.8761882835006211) //0x0020e12a: _forward_rfrag at gnrc_sixlowpan_frag_sfr.c:1664
-
-        TODO: move this filtering outside, otherwise pathrank is fucked
-        or todo: do the filtering before even saving the predicates !!
-        */
-
-        let mut filtered_predicates: Vec<SerializedPredicate> = Vec::new();
-        for preds in predicates_map.values_mut() {
-            let mut filtered: HashMap<String, &Predicate> = HashMap::new();
-            for pred in preds.iter() {
-                if pred.get_name().contains("flag") {
-                    // parse which flag
-                    let sub = pred.get_name().split("_").collect::<Vec<&str>>()[1];
-                    filtered.entry(sub.to_string()).or_insert(pred);
-                } else if pred.get_name().contains("less_or_equal") {
-                    let key = format!(
-                        "{}less_or_equal{}",
-                        pred.get_p1().unwrap(),
-                        pred.get_p2().unwrap()
-                    );
-                    filtered.insert(key, pred);
-                } else if pred.get_name().contains("greater_or_equal") {
-                    let key = format!(
-                        "{}greater_or_equal{}",
-                        pred.get_p1().unwrap(),
-                        pred.get_p2().unwrap()
-                    );
-                    filtered.insert(key, pred);
-                } else if pred.get_name().contains("reg_val_less") {
-                    match filtered.entry("reg_val_less".to_string()) {
-                        Entry::Occupied(mut entry) => {
-                            if pred.get_p2() < entry.get().get_p2() {
-                                entry.insert(pred);
-                            }
-                        }
-                        Entry::Vacant(entry) => {
-                            entry.insert(pred);
-                        }
-                    }
-                } else {
-                    filtered.insert(pred.get_name().clone(), pred);
-                }
-            }
-            filtered_predicates.extend(filtered.values().map(|p| p.to_serialzed()))
-        }
-
-        filtered_predicates
-    }
-
-    pub fn get_predicates(&self) -> Vec<SerializedPredicate> {
+    pub fn get_predicates(&self, config: &Config) -> Vec<SerializedPredicate> {
         self.address_scores
             .iter()
-            .map(|(_, p)| p.to_serialzed())
+            .map(|(_, p)| p.to_serialized(config))
             .collect()
     }
 

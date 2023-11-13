@@ -479,7 +479,7 @@ pub fn rank_predicates_arm(
     detailed_trace: Vec<user_regs_struct_arm>,
     binary: &Vec<u8>,
     text_info: (u64, u64),
-) -> Result<Vec<usize>> {
+) -> Result<(Vec<usize>, HashMap<usize, bool>)> {
     // rccs = root cause candidates
     let rccs: HashMap<usize, Vec<RootCauseCandidate>> = predicates
         .into_iter()
@@ -512,6 +512,8 @@ pub fn rank_predicates_arm(
         });
 
     let mut satisfaction: Vec<usize> = Vec::new();
+    // Data to record true_positive score of a predicate only if it is reached
+    let mut satisfaction_with_reachability: HashMap<usize, bool> = HashMap::new();
     for window in detailed_trace.windows(2) {
         match window {
             [prev, cur] => {
@@ -525,6 +527,16 @@ pub fn rank_predicates_arm(
                         if satisfied && !satisfaction.contains(&rcc.pred_id) {
                             satisfaction.push(rcc.pred_id);
                         }
+
+                        satisfaction_with_reachability
+                            .entry(rcc.pred_id)
+                            .and_modify(|e| {
+                                // update entry only if it changes from false to true
+                                if satisfied && !*e {
+                                    *e = true
+                                }
+                            })
+                            .or_insert(satisfied);
                     }
                 }
             }
@@ -532,7 +544,7 @@ pub fn rank_predicates_arm(
         }
     }
 
-    Ok(satisfaction)
+    Ok((satisfaction, satisfaction_with_reachability))
 }
 
 pub fn spawn_dbg(path: &Path, args: &[String]) -> Ptracer {

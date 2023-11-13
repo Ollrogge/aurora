@@ -16,13 +16,15 @@ pub fn analyze_traces(config: &Config) {
         &config.trace_dir,
         &trace_analysis_output_dir,
         &crash_blacklist_path,
+        &config.eval_dir,
+        config.load_offset,
     );
     let trace_analyzer = TraceAnalyzer::new(&trace_analysis_config);
 
     println!("dumping linear scores");
     trace_analyzer.dump_scores(&trace_analysis_config, false, false);
 
-    let predicates = trace_analyzer.get_predicates_better_than(0.90);
+    let predicates = trace_analyzer.get_predicates_better_than(0.90, &trace_analysis_config);
 
     serialize_mnemonics(config, "mnemonics.json", &predicates, &trace_analyzer);
     serialize_predicates(config, "predicates.json", &predicates);

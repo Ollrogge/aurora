@@ -118,6 +118,20 @@ pub struct Config {
     help = "Dumps the best predicate at address"
     )]
     pub predicate_address: usize,
+    #[structopt(
+        long = "eval dir",
+        default_value = "./",
+        help = "Path for eval directory"
+    )]
+    pub eval_dir: String,
+    #[structopt(
+        long = "load-offset",
+        //default_value = "0x0000555555554000",
+        default_value = "0x0",
+        parse(try_from_str = parse_hex),
+        help = "Load offset of the target"
+    )]
+    pub load_offset: usize,
 }
 
 impl Config {
@@ -125,6 +139,8 @@ impl Config {
         trace_dir: &String,
         output_dir: &Option<String>,
         crash_blacklist_path: &Option<String>,
+        eval_dir: &String,
+        load_offset: usize,
     ) -> Config {
         Config {
             path_to_crashes: format!("{}/traces/crashes/", trace_dir),
@@ -138,6 +154,7 @@ impl Config {
             random_traces: 0,
             filter_non_crashes: false,
             trace_info: false,
+            load_offset: load_offset,
             output_directory: if output_dir.is_some() {
                 output_dir.as_ref().unwrap().to_string()
             } else {
@@ -148,6 +165,7 @@ impl Config {
             } else {
                 "".to_string()
             },
+            eval_dir: eval_dir.clone(),
             predicate_address: 0,
         }
     }

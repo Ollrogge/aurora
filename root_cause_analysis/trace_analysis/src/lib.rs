@@ -1,6 +1,8 @@
+pub mod addr2line_lib;
 pub mod config;
 pub mod control_flow_graph;
 pub mod debug;
+pub mod elf_analysis;
 pub mod predicate_analysis;
 pub mod predicate_builder;
 pub mod predicate_synthesizer;

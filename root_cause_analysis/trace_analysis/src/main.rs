@@ -30,7 +30,7 @@ fn main() {
             "dumping predicate at address 0x{:x}",
             config.predicate_address
         );
-        debug_predicate_at_address(config.predicate_address, &mut trace_analyzer);
+        debug_predicate_at_address(&config, &mut trace_analyzer);
     }
 
     if config.dump_scores {

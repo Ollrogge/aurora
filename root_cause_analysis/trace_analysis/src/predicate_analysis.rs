@@ -1,4 +1,4 @@
-use crate::config::CpuArchitecture;
+use crate::config::Config;
 use crate::predicate_builder::PredicateBuilder;
 use crate::predicates::{Predicate, SimplePredicate};
 use std::collections::hash_map::Entry;
@@ -70,12 +70,7 @@ impl PredicateAnalyzer {
         let mut res: Vec<Predicate> = filtered.values().map(|&x| x.clone()).collect();
         for pred in preds {
             if let Predicate::Composite(comp) = &pred {
-                let found_pred = res.iter().find(|&x| *x == *comp.get_inner());
-                if let Some(other) = found_pred {
-                    if comp.score > other.get_score() {
-                        res.push(pred.clone());
-                    }
-                } else {
+                if comp.score > comp.get_best_score() {
                     res.push(pred.clone());
                 }
             }
@@ -87,9 +82,9 @@ impl PredicateAnalyzer {
     pub fn evaluate_best_predicates_at_address(
         address: usize,
         trace_analyzer: &TraceAnalyzer,
-        arch: CpuArchitecture,
+        config: &Config,
     ) -> Vec<Predicate> {
-        let pb = PredicateBuilder::new(arch);
+        let pb = PredicateBuilder::new(config);
         let predicates = pb.gen_predicates(address, trace_analyzer);
 
         if predicates.is_empty() {
@@ -116,97 +111,6 @@ impl PredicateAnalyzer {
         PredicateAnalyzer::filter_preds_at_same_address(best_preds)
     }
 
-    /*
-    fn evaluate_predicate2(
-        trace_analyzer: &TraceAnalyzer,
-        mut predicates: Vec<SimplePredicate>,
-    ) -> Vec<SimplePredicate> {
-        let mut scores = Vec::new();
-
-        for predicate in predicates.iter() {
-            let true_and_crash = trace_analyzer
-                .crashes
-                .as_slice()
-                .par_iter()
-                .map(|t| t.instructions.get(&predicate.address))
-                .filter(|i| predicate.execute(i))
-                .count() as f64;
-
-            let true_and_both = trace_analyzer
-                .iter_all_traces()
-                .map(|t| t.instructions.get(&predicate.address))
-                .filter(|i| predicate.execute(i))
-                .count() as f64;
-
-            let necessity_score = {
-                let score = true_and_crash / trace_analyzer.crashes.len() as f64;
-                if score.is_nan() {
-                    0.0
-                } else {
-                    score
-                }
-            };
-
-            let sufficiency_score = {
-                let score = true_and_crash / true_and_both;
-                if score.is_nan() {
-                    0.0
-                } else {
-                    score
-                }
-            };
-
-            /*
-            println!(
-                "Necessity: {}, sufficiency: {}, true_and_both: {}, true_and_crash: {}",
-                necessity_score, sufficiency_score, true_and_both, true_and_crash
-            );
-            */
-
-            scores.push((necessity_score, sufficiency_score));
-        }
-
-        let min_n = scores
-            .iter()
-            .map(|x| x.0)
-            .min_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-        let max_n = scores
-            .iter()
-            .map(|x| x.0)
-            .max_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-
-        let min_s = scores
-            .iter()
-            .map(|x| x.1)
-            .min_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-        let max_s = scores
-            .iter()
-            .map(|x| x.1)
-            .max_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-
-        for (i, p) in predicates.iter_mut().enumerate() {
-            let norm_necessity = (scores[i].0 - min_n) / (max_n - min_n);
-            let norm_sufficiency = (scores[i].1 - min_s) / (max_s - min_s);
-
-            let mut res = (norm_necessity.powf(2.0) + norm_sufficiency.powf(2.0)).sqrt();
-            // normalize L2-norm to [0, 1]
-            res /= 2.0_f64.sqrt();
-
-            //p.score = if res.is_nan() { 0.0 } else { res };
-            p.score = (scores[i].0 + scores[i].1) / 2.0;
-
-            //p.score = res;
-            //println!("Score: {}", p.score);
-        }
-
-        predicates
-    }
-    */
-
     fn evaluate_predicate(trace_analyzer: &TraceAnalyzer, mut predicate: Predicate) -> Predicate {
         let true_positives = trace_analyzer
             .crashes
@@ -228,6 +132,37 @@ impl PredicateAnalyzer {
 
         let score = (true_positives + true_negatives) / 2.0;
         predicate.set_score(score);
+
+        // 24820 = 0x20fc70
+        // 24817 = 0x20c9b8
+        // 24821 = 0x20d6f
+        // 24818 = 0x20a6bc
+        if predicate.get_address() == 0x20a6bc {
+            let mut avg = 0x0;
+            for t in trace_analyzer.non_crashes.iter() {
+                //let test = t.instructions.get(&0x20fc78);
+                let inst = t.instructions.get(&predicate.get_address());
+                if let Some(inst) = inst {
+                    // xpsr = 16
+                    if let Some(reg) = inst.registers_min.get(16) {
+                        let val = (reg.value() >> 30) & 0x1;
+                        //let val = reg.value();
+                        avg += val;
+                        //println!("reg: {:x} {:x}", val, t.last_address,);
+                    }
+                    //let val = 0;
+                }
+            }
+            avg /= trace_analyzer.non_crashes.len() as u64;
+            println!(
+                "Tp: {}, Tn: {}, Score: {}, name: {}, avg: {:x}",
+                true_positives,
+                true_negatives,
+                predicate.get_score(),
+                predicate.get_name(),
+                avg
+            );
+        }
 
         predicate
     }

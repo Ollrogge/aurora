@@ -21,6 +21,9 @@ zydis = "^3.0"
 capstone="*"
 nix = "^0.15"
 lazy_static = "*"
+goblin ="*"
+gimli="*"
+object ="*"
 
 [features]
 default = ["arm"]

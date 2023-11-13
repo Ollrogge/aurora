@@ -1,4 +1,5 @@
-use crate::config::CpuArchitecture;
+use crate::addr2line_lib::{addr2func, addr2line};
+use crate::config::{Config, CpuArchitecture};
 use crate::register::{Register64 as RegisterX86, RegisterArm};
 use crate::trace::{Instruction, Register, Selector};
 use lazy_static::lazy_static;
@@ -13,6 +14,7 @@ pub struct SerializedPredicate {
     pub score: f64,
     pub address: usize,
     pub id: usize,
+    pub addr2line_info: String,
 }
 
 lazy_static! {
@@ -20,7 +22,7 @@ lazy_static! {
 }
 
 impl SerializedPredicate {
-    pub fn new(name: String, address: usize, score: f64) -> SerializedPredicate {
+    pub fn new(config: &Config, name: String, address: usize, score: f64) -> SerializedPredicate {
         let to_be_hashed = format!("{}{}{}", name, address, score);
         let mut hasher = DefaultHasher::new();
         to_be_hashed.hash(&mut hasher);
@@ -31,11 +33,25 @@ impl SerializedPredicate {
             score,
             address,
             id: hash as usize,
+            addr2line_info: "".to_string(),
         }
     }
 
     pub fn to_string(&self) -> String {
         format!("{:#018x} -- {} -- {}", self.address, self.name, self.score)
+    }
+
+    pub fn set_addr2line_info(&mut self, info: String) {
+        self.addr2line_info = info;
+    }
+
+    pub fn get_func_name(&self) -> String {
+        let parts: Vec<&str> = self.addr2line_info.split(" ").collect();
+
+        let mut func_name = parts[1].to_string();
+        func_name.retain(|c| !c.is_whitespace());
+
+        func_name
     }
 
     pub fn serialize(&self) -> String {
@@ -88,10 +104,17 @@ impl Predicate {
         }
     }
 
-    pub fn to_serialzed(&self) -> SerializedPredicate {
+    pub fn to_serialized(&self, config: &Config) -> SerializedPredicate {
         match self {
-            Predicate::Composite(composite) => composite.to_serialzed(),
-            Predicate::Simple(simple) => simple.to_serialzed(),
+            Predicate::Composite(composite) => composite.to_serialized(config),
+            Predicate::Simple(simple) => simple.to_serialized(config),
+        }
+    }
+
+    pub fn to_serialized_with_func_name(&self, config: &Config) -> SerializedPredicate {
+        match self {
+            Predicate::Composite(composite) => composite.to_serialized_with_func_name(config),
+            Predicate::Simple(simple) => simple.to_serialized_with_func_name(config),
         }
     }
 
@@ -116,7 +139,7 @@ pub struct CompositePredicate {
     pub p1: Option<usize>,
     pub p2: Option<usize>,
     predicates: Vec<Predicate>,
-    function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
+    function: Option<fn(&Instruction, Option<usize>, Option<usize>) -> bool>,
     pub score: f64,
     pub address: usize,
 }
@@ -136,7 +159,7 @@ impl CompositePredicate {
         name: &str,
         address: usize,
         predicates: Vec<Predicate>,
-        function: fn(&Instruction, Option<usize>, Option<usize>) -> bool,
+        function: Option<fn(&Instruction, Option<usize>, Option<usize>) -> bool>,
         p1: Option<usize>,
         p2: Option<usize>,
     ) -> CompositePredicate {
@@ -151,8 +174,19 @@ impl CompositePredicate {
         }
     }
 
-    pub fn to_serialzed(&self) -> SerializedPredicate {
-        SerializedPredicate::new(self.name.to_string(), self.address, self.score)
+    pub fn to_serialized(&self, config: &Config) -> SerializedPredicate {
+        SerializedPredicate::new(config, self.name.to_string(), self.address, self.score)
+    }
+
+    pub fn to_serialized_with_func_name(&self, config: &Config) -> SerializedPredicate {
+        let mut pred =
+            SerializedPredicate::new(config, self.name.to_string(), self.address, self.score);
+
+        let info = addr2line(config, pred.address);
+
+        pred.set_addr2line_info(info);
+
+        pred
     }
 
     pub fn execute(&self, instruction_option: &Option<&Instruction>) -> bool {
@@ -164,7 +198,7 @@ impl CompositePredicate {
                     .map(|p| p.execute(&Some(instruction)))
                     .collect();
 
-                results.iter().all(|&x| x) && instruction.reaches_crash_address
+                results.iter().all(|&x| x)
             }
             None => false,
         }
@@ -173,6 +207,14 @@ impl CompositePredicate {
     // currently we assume just one inner predicate
     pub fn get_inner(&self) -> &Predicate {
         &self.predicates[0]
+    }
+
+    pub fn get_best_score(&self) -> f64 {
+        self.predicates
+            .iter()
+            .max_by(|a, b| a.get_score().partial_cmp(&b.get_score()).unwrap())
+            .unwrap()
+            .get_score()
     }
 }
 
@@ -218,8 +260,19 @@ impl SimplePredicate {
         Predicate::Simple(SimplePredicate::new("empty", address, empty, None, None))
     }
 
-    pub fn to_serialzed(&self) -> SerializedPredicate {
-        SerializedPredicate::new(self.name.to_string(), self.address, self.score)
+    pub fn to_serialized(&self, config: &Config) -> SerializedPredicate {
+        SerializedPredicate::new(config, self.name.to_string(), self.address, self.score)
+    }
+
+    pub fn to_serialized_with_func_name(&self, config: &Config) -> SerializedPredicate {
+        let mut pred =
+            SerializedPredicate::new(config, self.name.to_string(), self.address, self.score);
+
+        let info = addr2line(config, pred.address);
+
+        pred.set_addr2line_info(info);
+
+        pred
     }
 
     pub fn execute(&self, instruction_option: &Option<&Instruction>) -> bool {

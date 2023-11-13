@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::rankings::{serialize_compound_rankings, serialize_rankings};
+use crate::rankings::{serialize_compound_rankings, serialize_evaluation_info, serialize_rankings};
 use crate::utils::{glob_paths, read_file};
 use anyhow::{anyhow, Context, Result};
 use capstone::arch::arm::{self, ArmInsn, ArmOperandType};
@@ -7,6 +7,7 @@ use capstone::prelude::*;
 use goblin::elf::{program_header, Elf};
 use predicate_monitoring::{rank_predicates, rank_predicates_arm};
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::fs::{self, read, read_to_string, remove_file};
@@ -57,8 +58,10 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
         };
 
         let predicate_file = &format!("{}/{}", config.eval_dir, predicate_file_name());
-        let rankings = monitor_predicates_arm(config, &binary, text_info, predicate_file)?;
+        let (rankings, evaluation_info) =
+            monitor_predicates_arm(config, &binary, text_info, predicate_file);
 
+        serialize_evaluation_info(config, &evaluation_info);
         serialize_rankings(config, &rankings);
 
         Ok(())
@@ -70,22 +73,37 @@ fn monitor_predicates_arm(
     binary: &Vec<u8>,
     text_info: (u64, u64),
     file_path: &String,
-) -> Result<Vec<Vec<usize>>> {
+) -> (Vec<Vec<usize>>, Vec<HashMap<usize, bool>>) {
     let predicates = deserialize_predicates(file_path);
 
     println!("Amount of predicates: {}", predicates.len());
 
     // go through the detailed trace of every crashing input and check
     // predicate fulfillment, returns a ranking vector for each binary
-    glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
-        .into_par_iter()
-        .enumerate()
-        .map(|(_, path)| monitor_arm(path, &binary, text_info, &predicates))
-        .filter(|r| match r {
-            Ok(val) => !val.is_empty(),
-            Err(_) => true,
-        })
-        .collect::<Result<Vec<_>, _>>()
+
+    let (rankings, evaluation_info): (Vec<Vec<usize>>, Vec<HashMap<usize, bool>>) =
+        glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
+            .into_par_iter()
+            .enumerate()
+            .filter_map(|(_, path)| {
+                match monitor_arm(path, &binary, text_info, &predicates) {
+                    Ok(result) => Some(result),
+                    Err(_) => None, // Ignore errors or handle them as needed
+                }
+            })
+            .unzip();
+
+    (rankings, evaluation_info)
+
+    //glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
+    //   .into_par_iter()
+    //   .enumerate()
+    //   .map(|(_, path)| monitor_arm(path, &binary, text_info, &predicates))
+    //   .filter(|r| match r {
+    //       Ok(val) => !val.0.is_empty(),
+    //       Err(_) => true,
+    //   })
+    //   .collect::Result<Vec<(Vec<usize>, HashMap<std::string::String, bool>)>>, _>>()
 }
 
 fn deserialize_predicates(predicate_file: &String) -> Vec<SerializedPredicate> {
@@ -99,7 +117,7 @@ pub fn monitor_arm(
     binary: &Vec<u8>,
     text_info: (u64, u64),
     predicates: &Vec<SerializedPredicate>,
-) -> Result<Vec<usize>> {
+) -> Result<(Vec<usize>, HashMap<usize, bool>)> {
     let f = File::open(input_path).context("open monitor file")?;
 
     // all register values throughout the whole exeuction of the program

@@ -54,11 +54,11 @@ pub fn dump_trace_info(config: &Config, trace_analyzer: &TraceAnalyzer) {
 }
 
 // todo: do I need this
-pub fn debug_predicate_at_address(address: usize, trace_analyzer: &mut TraceAnalyzer) {
+pub fn debug_predicate_at_address(config: &Config, trace_analyzer: &mut TraceAnalyzer) {
     let predicates = PredicateAnalyzer::evaluate_best_predicates_at_address(
-        address,
+        config.predicate_address,
         trace_analyzer,
-        CpuArchitecture::X86,
+        config,
     );
 
     for predicate in predicates.iter() {

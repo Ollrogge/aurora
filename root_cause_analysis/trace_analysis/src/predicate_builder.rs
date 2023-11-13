@@ -1,20 +1,28 @@
+use crate::config::Config;
 use crate::config::CpuArchitecture;
 use crate::control_flow_graph::ControlFlowGraph;
+use crate::elf_analysis::find_func_for_addr;
+use crate::elf_analysis::get_functions;
 use crate::predicate_synthesizer::{gen_reg_val_name, PredicateSynthesizer};
-use crate::predicates::*;
 use crate::register::{Register64 as RegisterX86, RegisterArm, REGISTERS_ARM, REGISTERS_X86};
 use crate::trace::Instruction;
 use crate::trace::Selector;
 use crate::trace_analyzer::TraceAnalyzer;
+use crate::{predicates::*, trace};
+use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 
 pub struct PredicateBuilder {
     arch: CpuArchitecture,
+    eval_dir: String,
 }
 
 impl PredicateBuilder {
-    pub fn new(arch: CpuArchitecture) -> PredicateBuilder {
-        PredicateBuilder { arch }
+    pub fn new(config: &Config) -> PredicateBuilder {
+        PredicateBuilder {
+            arch: config.cpu_architecture,
+            eval_dir: config.eval_dir.clone(),
+        }
     }
 
     fn gen_visited(address: usize) -> Vec<Predicate> {
@@ -451,10 +459,46 @@ impl PredicateBuilder {
             name.as_str(),
             pred.get_address(),
             vec![pred],
-            reaches,
+            Some(reaches),
             None,
             None,
         ))
+    }
+
+    pub fn gen_composite_two_in_func(
+        &self,
+        eval_dir: &String,
+        preds: &Vec<Predicate>,
+    ) -> Result<Vec<Predicate>> {
+        let funcs = get_functions(&eval_dir).context("Unable to get functions")?;
+        let mut preds_per_func = HashMap::new();
+
+        let mut comp_preds: Vec<Predicate> = Vec::new();
+
+        for p in preds.iter() {
+            let func = find_func_for_addr(&funcs, p.get_address()).unwrap();
+
+            preds_per_func.entry(func).or_insert_with(Vec::new).push(p);
+        }
+
+        for func in preds_per_func.values() {
+            for (i, &value1) in func.iter().enumerate() {
+                for &value2 in func.iter().skip(i + 1) {
+                    let name = format!("{} and {}", value1.get_name(), value2.get_name());
+                    let pred = Predicate::Composite(CompositePredicate::new(
+                        name.as_str(),
+                        value1.get_address(),
+                        vec![value1.clone(), value2.clone()],
+                        None,
+                        None,
+                        None,
+                    ));
+                    comp_preds.push(pred);
+                }
+            }
+        }
+
+        Ok(comp_preds)
     }
 
     pub fn gen_predicates(&self, address: usize, trace_analyzer: &TraceAnalyzer) -> Vec<Predicate> {
@@ -501,6 +545,13 @@ impl PredicateBuilder {
         */
 
         //ret.extend(self.gen_composite_reaches(last_address, ))
+
+        /*
+        let comp = self.gen_composite_two_in_func(&self.eval_dir, &ret);
+        if let Ok(comp) = comp {
+            ret.extend(comp);
+        }
+        */
 
         ret
     }
