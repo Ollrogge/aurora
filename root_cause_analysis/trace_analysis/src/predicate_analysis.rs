@@ -91,6 +91,8 @@ impl PredicateAnalyzer {
             return vec![SimplePredicate::gen_empty(address)];
         }
 
+        //let mut ret = PredicateAnalyzer::evaluate_predicate2(trace_analyzer, predicates);
+
         let mut ret: Vec<Predicate> = predicates
             .into_par_iter()
             .map(|p| PredicateAnalyzer::evaluate_predicate(trace_analyzer, p))
@@ -116,6 +118,7 @@ impl PredicateAnalyzer {
             .crashes
             .as_slice()
             .par_iter()
+            //.filter(|t| t.instructions.get(&predicate.get_address()).is_some())
             .map(|t| t.instructions.get(&predicate.get_address()))
             .filter(|i| predicate.execute(i))
             .count() as f64
@@ -132,37 +135,6 @@ impl PredicateAnalyzer {
 
         let score = (true_positives + true_negatives) / 2.0;
         predicate.set_score(score);
-
-        // 24820 = 0x20fc70
-        // 24817 = 0x20c9b8
-        // 24821 = 0x20d6f
-        // 24818 = 0x20a6bc
-        if predicate.get_address() == 0x20a6bc {
-            let mut avg = 0x0;
-            for t in trace_analyzer.non_crashes.iter() {
-                //let test = t.instructions.get(&0x20fc78);
-                let inst = t.instructions.get(&predicate.get_address());
-                if let Some(inst) = inst {
-                    // xpsr = 16
-                    if let Some(reg) = inst.registers_min.get(16) {
-                        let val = (reg.value() >> 30) & 0x1;
-                        //let val = reg.value();
-                        avg += val;
-                        //println!("reg: {:x} {:x}", val, t.last_address,);
-                    }
-                    //let val = 0;
-                }
-            }
-            avg /= trace_analyzer.non_crashes.len() as u64;
-            println!(
-                "Tp: {}, Tn: {}, Score: {}, name: {}, avg: {:x}",
-                true_positives,
-                true_negatives,
-                predicate.get_score(),
-                predicate.get_name(),
-                avg
-            );
-        }
 
         predicate
     }

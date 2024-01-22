@@ -256,69 +256,6 @@ impl PredicateSynthesizer {
         )
     }
 
-    /*
-    fn evaluate_predicate_with_reachability2(
-        trace_analyzer: &TraceAnalyzer,
-        mut predicates: Vec<Predicate>,
-    ) -> Vec<Predicate> {
-        let mut scores = Vec::new();
-
-        for predicate in predicates.iter() {
-            let true_and_crash = trace_analyzer
-                .crashes
-                .as_slice()
-                .par_iter()
-                .map(|t| t.instructions.get(&predicate.address))
-                .filter(|i| predicate.execute(i))
-                .count() as f64;
-
-            let true_and_both = trace_analyzer
-                .iter_all_traces()
-                .map(|t| t.instructions.get(&predicate.address))
-                .filter(|i| predicate.execute(i))
-                .count() as f64;
-
-            let necessity_score = true_and_crash / trace_analyzer.crashes.len() as f64;
-            let sufficiency_score = true_and_crash / true_and_both;
-
-            scores.push((necessity_score, sufficiency_score));
-        }
-
-        let min_n = scores
-            .iter()
-            .map(|x| x.0)
-            .min_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-        let max_n = scores
-            .iter()
-            .map(|x| x.0)
-            .max_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-
-        let min_s = scores
-            .iter()
-            .map(|x| x.1)
-            .min_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-        let max_s = scores
-            .iter()
-            .map(|x| x.1)
-            .max_by(|a, b| a.partial_cmp(&b).unwrap())
-            .unwrap();
-
-        for (i, p) in predicates.iter_mut().enumerate() {
-            let norm_necessity = (scores[i].0 - min_n) / (max_n - min_n);
-            let norm_sufficiency = (scores[i].1 - min_s) / (max_s - min_s);
-
-            let res = (norm_necessity.powf(2.0) + norm_sufficiency.powf(2.0)).sqrt();
-
-            p.score = res;
-        }
-
-        predicates
-    }
-    */
-
     // SimplePredicate since this is a synthesiz step
     pub fn evaluate_predicate_with_reachability(
         address: usize,

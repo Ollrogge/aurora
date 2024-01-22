@@ -80,30 +80,19 @@ fn monitor_predicates_arm(
 
     // go through the detailed trace of every crashing input and check
     // predicate fulfillment, returns a ranking vector for each binary
-
     let (rankings, evaluation_info): (Vec<Vec<usize>>, Vec<HashMap<usize, bool>>) =
         glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
             .into_par_iter()
             .enumerate()
-            .filter_map(|(_, path)| {
-                match monitor_arm(path, &binary, text_info, &predicates) {
+            .filter_map(
+                |(_, path)| match monitor_arm(path, &binary, text_info, &predicates) {
                     Ok(result) => Some(result),
-                    Err(_) => None, // Ignore errors or handle them as needed
-                }
-            })
+                    Err(_) => None,
+                },
+            )
             .unzip();
 
     (rankings, evaluation_info)
-
-    //glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
-    //   .into_par_iter()
-    //   .enumerate()
-    //   .map(|(_, path)| monitor_arm(path, &binary, text_info, &predicates))
-    //   .filter(|r| match r {
-    //       Ok(val) => !val.0.is_empty(),
-    //       Err(_) => true,
-    //   })
-    //   .collect::Result<Vec<(Vec<usize>, HashMap<std::string::String, bool>)>>, _>>()
 }
 
 fn deserialize_predicates(predicate_file: &String) -> Vec<SerializedPredicate> {

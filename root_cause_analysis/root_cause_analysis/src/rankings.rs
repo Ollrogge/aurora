@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fs::{self, read, File};
 use std::sync::Mutex;
+use trace_analysis::addr2line_lib::addr2func;
 use trace_analysis::predicates::SerializedPredicate;
 use trace_analysis::register::{user_regs_struct_arm, RegisterArm};
 
@@ -66,54 +67,6 @@ fn rank_path_level(val: usize, rank: &Vec<usize>) -> f64 {
         Some(pos) => pos as f64 / rank.len() as f64,
         None => 2.0,
     }
-}
-
-fn calc_conditional_probs(
-    rankings: &Vec<Vec<usize>>,
-) -> (HashMap<usize, f64>, HashMap<(usize, usize), f64>) {
-    // calculate individual probability for each predicate
-    let mut prob = HashMap::new();
-    for ranking in rankings.iter() {
-        for pred in ranking.iter() {
-            *prob.entry(*pred).or_insert(0.0) += 1.0;
-        }
-    }
-
-    for p in prob.values_mut() {
-        *p /= rankings.len() as f64;
-    }
-
-    let cond_prob: Mutex<HashMap<(usize, usize), f64>> = Mutex::new(HashMap::new());
-    // calculate conditional probability matrix
-    let keys: Vec<_> = prob.keys().collect();
-    keys.par_iter().for_each(|&&a| {
-        for &b in prob.keys() {
-            let key = (a, b);
-            let tmp;
-            if a == b {
-                tmp = prob[&a];
-                //cond_prob.insert(key, prob[&a]);
-            } else {
-                let joint_cnt = rankings
-                    .iter()
-                    .filter(|&ranking| ranking.contains(&a) && ranking.contains(&b))
-                    .count() as f64;
-
-                // todo: does deduplication create problems here ?
-                let p_a_b = joint_cnt / rankings.len() as f64;
-
-                if prob[&b] == 0.0 {
-                    tmp = 0.0;
-                } else {
-                    tmp = p_a_b / prob[&b];
-                }
-            }
-            // Ensure that the shared state is updated in a thread-safe manner.
-            let mut cond_prob = cond_prob.lock().unwrap();
-            cond_prob.insert(key, tmp);
-        }
-    });
-    (prob, cond_prob.into_inner().unwrap())
 }
 
 type Function = String;
@@ -197,7 +150,7 @@ impl CompoundPredicate {
     pub fn dumb_data(&self, config: &Config, ranking_number: usize) {
         let mut content = Vec::new();
         let mnemonics = deserialize_mnemonics(config);
-        let re = Regex::new(r": (.+?) at (.+?):(\d+)").unwrap();
+        let re = Regex::new(r": (.+?) at (.+?):(.+)").unwrap();
         let mut num = 0x0;
         for (func, preds) in self.data.iter() {
             //let info = addr2line(config, preds[0].address);
@@ -238,14 +191,15 @@ impl CompoundPredicate {
         }
 
         let info = addr2line(config, self.crash_loc);
+
         let caps = re.captures(&info).unwrap();
 
         let function_name = caps.get(1).unwrap().as_str();
         let file_name = caps.get(2).unwrap().as_str();
 
         content.push(format!(
-            "\n#{}. {} in  {} (most often occuring crash loc) \n",
-            num, function_name, file_name
+            "\n#{}. 0x{:x} in {} in {} (most often occurring crash loc) \n",
+            num, self.crash_loc, function_name, file_name
         ));
 
         let fp = format!(
@@ -257,21 +211,30 @@ impl CompoundPredicate {
 }
 
 fn get_most_often_occuring_crash_loc(config: &Config) -> Result<usize> {
-    let mut crash_locs: HashMap<u32, u32> = HashMap::new();
+    let crash_locs: Mutex<HashMap<u32, u32>> = Mutex::new(HashMap::new());
     let paths = glob_paths(format!("{}/crashes/*-full*", config.eval_dir));
-    for path in paths {
-        let f = File::open(path).context("open monitor file")?;
+
+    paths.par_iter().for_each(|path| {
+        let f = File::open(path).context("open monitor file").unwrap();
 
         // all register values throughout the whole exeuction of the program
-        let detailed_trace: Vec<Vec<u32>> =
-            bincode::deserialize_from(f).context("bincode deserialize")?;
+        let detailed_trace: Vec<Vec<u32>> = bincode::deserialize_from(f)
+            .context("bincode deserialize")
+            .unwrap();
 
         let last_reg_state =
             user_regs_struct_arm::try_from(detailed_trace[detailed_trace.len() - 1].clone())
-                .map_err(|_| anyhow!("unable to get user_regs_struct_arm"))?;
+                .map_err(|_| anyhow!("unable to get user_regs_struct_arm"))
+                .unwrap();
 
-        *crash_locs.entry(last_reg_state.pc).or_insert(0) += 1;
-    }
+        *crash_locs
+            .lock()
+            .unwrap()
+            .entry(last_reg_state.pc)
+            .or_insert(0) += 1;
+    });
+
+    let crash_locs = crash_locs.into_inner()?;
 
     let crash_loc = crash_locs.iter().max_by(|a, b| a.1.cmp(b.1)).unwrap();
 
@@ -308,15 +271,29 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
     //let (_, cond_probs) = calc_conditional_probs(&rankings);
 
     for ranking in rankings {
-        let funcs = ranking.iter().fold(Vec::new(), |mut acc, pred_id| {
+        let mut funcs = ranking.iter().rev().fold(Vec::new(), |mut acc, pred_id| {
             if predicates.contains_key(pred_id) {
                 let function = &predicates[pred_id].get_func_name();
+
+                /*
+                if let Some(last) = acc.last() {
+                    if function != last {
+                        acc.push(function.clone());
+                    }
+                } else {
+                    acc.push(function.clone());
+                }
+                */
                 if !acc.contains(function) {
-                    acc.push(function.clone())
+                    acc.push(function.clone());
                 }
             }
             acc
         });
+
+        //remove_longest_repeating_subvec(&mut funcs);
+
+        funcs.reverse();
 
         *paths.entry(funcs).or_insert(0) += 1;
     }
@@ -326,9 +303,9 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
 
     //paths.iter_mut().for_each(|(path, _)| path.reverse());
 
-    let best_score = paths[0].1;
-
+    //let best_score = paths[0].1;
     let scores: Vec<u64> = paths.iter().map(|path| path.1).collect();
+    let best_score = scores[0];
 
     let paths: Vec<&Vec<Function>> = paths
         .iter()
@@ -344,7 +321,9 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         scores
     );
 
-    for (i, best_path) in paths.iter().enumerate() {
+    for (i, &best_path) in paths.iter().enumerate() {
+        let best_path = best_path.clone();
+
         let mut compound_predicate = CompoundPredicate::new();
 
         for func in best_path.iter() {
@@ -442,31 +421,4 @@ fn dump_ranked_predicates(
         &format!("{}/ranked_predicates.txt", config.eval_dir),
         content,
     );
-}
-
-// powerset
-fn gen_subsets(ranking: &Vec<usize>) -> Vec<Vec<usize>> {
-    let n = ranking.len();
-    let subset_amt = 2_usize.pow(n as u32);
-
-    let mut result = Vec::new();
-
-    /*
-        2^n possible subsetsets. Each subset can be thought of as a binary string of length n.
-        Build subsets simply by looping from 0..2^n and including element if bit is set.
-    */
-    for i in 0..subset_amt {
-        let mut subset = Vec::new();
-        for j in 0..n {
-            if (i & (1 << j)) != 0 {
-                subset.push(ranking[j]);
-            }
-        }
-
-        if subset.len() > 1 {
-            result.push(subset);
-        }
-    }
-
-    result
 }
