@@ -11,11 +11,24 @@ pub fn glob_paths(pattern: String) -> Vec<String> {
 }
 
 pub fn executable(config: &Config) -> String {
-    let pattern = format!("{}/*_trace", config.eval_dir);
-    let mut results = glob_paths(pattern);
-    assert_eq!(results.len(), 1);
+    let patterns = [
+        format!("{}/*.elf", config.trace_dir),
+        format!("{}/*.bin", config.trace_dir),
+    ];
 
-    results.pop().expect("No trace executable found")
+    for pattern in &patterns {
+        let result = glob::glob(pattern)
+            .expect("Failed to read glob pattern")
+            .filter_map(Result::ok)
+            .map(|path| path.to_string_lossy().into_owned())
+            .next();
+
+        if let Some(path) = result {
+            return path;
+        }
+    }
+
+    panic!("No trace executable found in {:?}", config.eval_dir);
 }
 
 fn addr2line_args(config: &Config, address: usize) -> Vec<String> {
