@@ -31,7 +31,7 @@ pub struct MemoryAddresses(pub HashMap<String, Range<usize>>);
 
 impl MemoryAddresses {
     pub fn read_from_file(config: &Config) -> MemoryAddresses {
-        let file_path = format!("{}/addresses.json", config.output_directory);
+        let file_path = format!("{}/addresses.json", config.trace_dir);
         let content =
             fs::read_to_string(&file_path).expect(&format!("File {} not found!", &file_path));
         serde_json::from_str(&content).expect(&format!("Could not deserialize file {}", &file_path))

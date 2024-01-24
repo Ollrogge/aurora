@@ -220,9 +220,10 @@ fn parse_args(config: &Config) -> String {
 }
 
 pub fn executable(config: &Config) -> String {
+    // /<target>/corpus/traces
     let patterns = [
-        format!("{}/*.elf", config.trace_dir),
-        format!("{}/*.bin", config.trace_dir),
+        format!("../../{}/*.elf", config.trace_dir),
+        format!("../../{}/*.bin", config.trace_dir),
     ];
 
     for pattern in &patterns {
