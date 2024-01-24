@@ -145,8 +145,8 @@ impl Config {
         load_offset: usize,
     ) -> Config {
         Config {
-            path_to_crashes: format!("{}/traces/crashes/", trace_dir),
-            path_to_non_crashes: format!("{}/traces/non_crashes/", trace_dir),
+            path_to_crashes: format!("{}/crashes/", trace_dir),
+            path_to_non_crashes: format!("{}/non_crashes/", trace_dir),
             check_traces: false,
             dump_traces: false,
             dump_scores: true,
