@@ -35,13 +35,10 @@ pub fn monitor_predicates(config: &Config) -> Result<()> {
         serialize_rankings(config, &rankings);
         Ok(())
     } else {
-        // todo: different way than depending on the fact that the binary is in the parent dir
-        let pattern = format!("{}/*_trace", config.eval_dir);
-        let binary_path = glob_paths(pattern)
-            .pop()
-            .expect("No binary found for monitoring");
+        let executable_path = executable(config);
 
-        let binary = fs::read(binary_path)?;
+        // todo: will break if only a .bin is available
+        let binary = fs::read(executable_path)?;
         let elf = Elf::parse(&binary)?;
 
         let text_info = {
