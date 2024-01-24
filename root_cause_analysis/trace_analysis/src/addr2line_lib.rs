@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::config::CpuArchitecture;
 use glob::glob;
+use std::path::PathBuf;
 use std::process::Command;
 
 pub fn glob_paths(pattern: String) -> Vec<String> {
@@ -12,9 +13,12 @@ pub fn glob_paths(pattern: String) -> Vec<String> {
 
 pub fn executable(config: &Config) -> String {
     // /<target>/corpus/traces
+    let dir = PathBuf::from(&config.trace_dir);
+    let dir = dir.parent().unwrap().parent().unwrap();
+
     let patterns = [
-        format!("../../{}/*.elf", config.trace_dir),
-        format!("../../{}/*.bin", config.trace_dir),
+        format!("{}/*.elf", dir.display().to_string()),
+        format!("{}/*.bin", dir.display().to_string()),
     ];
 
     for pattern in &patterns {

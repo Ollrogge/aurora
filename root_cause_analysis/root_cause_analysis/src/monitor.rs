@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fs::File;
 use std::fs::{self, read, read_to_string, remove_file};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Instant;
 use trace_analysis::config::CpuArchitecture;
@@ -221,9 +222,12 @@ fn parse_args(config: &Config) -> String {
 
 pub fn executable(config: &Config) -> String {
     // /<target>/corpus/traces
+    let dir = PathBuf::from(&config.trace_dir);
+    let dir = dir.parent().unwrap().parent().unwrap();
+
     let patterns = [
-        format!("../../{}/*.elf", config.trace_dir),
-        format!("../../{}/*.bin", config.trace_dir),
+        format!("{}/*.elf", dir.display().to_string()),
+        format!("{}/*.bin", dir.display().to_string()),
     ];
 
     for pattern in &patterns {
