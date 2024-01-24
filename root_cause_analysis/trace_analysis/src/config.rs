@@ -124,6 +124,8 @@ pub struct Config {
         help = "Path for eval directory"
     )]
     pub eval_dir: String,
+    #[structopt(long = "trace-dir", default_value = "", help = "Path to traces")]
+    pub trace_dir: String,
     #[structopt(
         long = "load-offset",
         //default_value = "0x0000555555554000",
@@ -166,6 +168,7 @@ impl Config {
                 "".to_string()
             },
             eval_dir: eval_dir.clone(),
+            trace_dir: trace_dir.clone(),
             predicate_address: 0,
         }
     }
