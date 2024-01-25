@@ -212,7 +212,7 @@ impl CompoundPredicate {
 
 fn get_most_often_occuring_crash_loc(config: &Config) -> Result<usize> {
     let crash_locs: Mutex<HashMap<u32, u32>> = Mutex::new(HashMap::new());
-    let paths = glob_paths(format!("{}/crashes/*-full*", config.eval_dir));
+    let paths = glob_paths(format!("{}/crashes/*-full*", config.trace_dir));
 
     paths.par_iter().for_each(|path| {
         let f = File::open(path).context("open monitor file").unwrap();
