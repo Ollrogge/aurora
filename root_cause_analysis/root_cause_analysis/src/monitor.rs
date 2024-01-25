@@ -79,7 +79,7 @@ fn monitor_predicates_arm(
     // go through the detailed trace of every crashing input and check
     // predicate fulfillment, returns a ranking vector for each binary
     let (rankings, evaluation_info): (Vec<Vec<usize>>, Vec<HashMap<usize, bool>>) =
-        glob_paths(format!("{}/crashes/*-full*", config.eval_dir))
+        glob_paths(format!("{}/crashes/*-full*", config.trace_dir))
             .into_par_iter()
             .enumerate()
             .filter_map(
