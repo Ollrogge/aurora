@@ -13,8 +13,8 @@ pub fn glob_paths(pattern: String) -> Vec<String> {
 
 pub fn executable(config: &Config) -> String {
     // /<target>/corpus/traces
-    let dir = PathBuf::from(&config.trace_dir);
-    let dir = dir.parent().unwrap().parent().unwrap();
+    let dir = PathBuf::from(&config.eval_dir);
+    //let dir = dir.parent().unwrap().parent().unwrap();
 
     let patterns = [
         format!("{}/*.elf", dir.display().to_string()),
@@ -33,7 +33,7 @@ pub fn executable(config: &Config) -> String {
         }
     }
 
-    panic!("No trace executable found in {:?}", config.eval_dir);
+    panic!("No trace executable found in : {:?}", dir);
 }
 
 fn addr2line_args(config: &Config, address: usize) -> Vec<String> {

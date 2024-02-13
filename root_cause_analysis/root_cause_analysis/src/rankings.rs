@@ -246,10 +246,10 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
     let mut preds = deserialize_predicates(config);
     let evaluation_info = deserialize_evaluation_info(config);
 
-    // Filter predicates to only contain predicates with a true positive score of
+    // Filter predicates to only contain predicates with a true positive rate of
     // 1 if they have been evaluated. We consider if a predicate is evaluated because
     // there can be multiple paths to a crash, which would cause all predicates on
-    // the diverging paths to not have a true positive score of 1
+    // the diverging paths to not have a true positive rate of 1
     preds.retain(|p| {
         evaluation_info.iter().all(|info| match info.get(&p.id) {
             Some(val) => *val,
@@ -258,6 +258,11 @@ pub fn create_compound_rankings(config: &Config) -> Result<()> {
         })
     });
     //preds.retain(|p| rankings.iter().all(|r| r.contains(&p.id)));
+
+    // => all predicates and therefore also functions on the crash path will have a
+    // true positive rate of 1 when executed
+    // So when they are executed the program **always** crashes
+    // This means we cant really filter the path any further
 
     let predicates: HashMap<usize, SerializedPredicate> =
         preds.into_iter().map(|p| (p.id, p)).collect();
